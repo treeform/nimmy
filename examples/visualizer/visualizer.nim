@@ -10,6 +10,8 @@ import
 # Forward declarations for console state (defined later)
 var consoleInput: string
 var consoleInputActive: bool
+var consoleHistory: seq[string]
+var consoleHistoryIndex: int = -1  # -1 means not browsing history
 
 # =============================================================================
 # Atlas Setup
@@ -39,6 +41,7 @@ window.runeInputEnabled = true
 window.onRune = proc(rune: Rune) =
   if consoleInputActive:
     consoleInput.add($rune)
+    consoleHistoryIndex = -1  # Reset history browsing when typing
 
 let sk = newSilky("dist/atlas.png", "dist/atlas.json")
 
@@ -840,6 +843,14 @@ proc executeConsoleInput() =
   if debugState == nil or consoleInput.strip() == "":
     return
   
+  # Add to history (avoid duplicates at the end)
+  let trimmedInput = consoleInput.strip()
+  if consoleHistory.len == 0 or consoleHistory[^1] != trimmedInput:
+    consoleHistory.add(trimmedInput)
+  
+  # Reset history browsing
+  consoleHistoryIndex = -1
+  
   # Add input to output as a command echo
   addOutput("> " & consoleInput)
   
@@ -860,6 +871,7 @@ proc executeConsoleInput() =
     # No VM is a non-fatal error too - user might want to restart
     addError("No VM available (syntax error in script)", fatal = false)
   
+  # Clear input but keep focus
   consoleInput = ""
 
 proc drawConsoleContent(frameId: string) =
@@ -1123,12 +1135,33 @@ proc main() =
       # Console input mode - handle typing
       if window.buttonPressed[KeyEnter]:
         executeConsoleInput()
-        consoleInputActive = false
+        # Keep focus - don't set consoleInputActive = false
       elif window.buttonPressed[KeyEscape]:
         consoleInputActive = false
+        consoleHistoryIndex = -1
       elif window.buttonPressed[KeyBackspace]:
         if consoleInput.len > 0:
           consoleInput = consoleInput[0..^2]
+        consoleHistoryIndex = -1  # Reset history when editing
+      elif window.buttonPressed[KeyUp]:
+        # Navigate history - go back
+        if consoleHistory.len > 0:
+          if consoleHistoryIndex == -1:
+            # Start browsing from the end
+            consoleHistoryIndex = consoleHistory.len - 1
+          elif consoleHistoryIndex > 0:
+            consoleHistoryIndex -= 1
+          consoleInput = consoleHistory[consoleHistoryIndex]
+      elif window.buttonPressed[KeyDown]:
+        # Navigate history - go forward
+        if consoleHistoryIndex >= 0:
+          if consoleHistoryIndex < consoleHistory.len - 1:
+            consoleHistoryIndex += 1
+            consoleInput = consoleHistory[consoleHistoryIndex]
+          else:
+            # Past the end - clear input and reset
+            consoleHistoryIndex = -1
+            consoleInput = ""
     else:
       # Normal mode - debug shortcuts
       if window.buttonPressed[KeySpace]:
