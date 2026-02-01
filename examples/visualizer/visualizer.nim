@@ -77,6 +77,10 @@ type
 # =============================================================================
 
 type
+  OutputLine = object
+    text: string
+    isError: bool
+  
   DebuggerState = ref object
     scriptPath: string
     source: string
@@ -84,7 +88,8 @@ type
     ast: Node
     vm: VM
     running: bool
-    outputLines: seq[string]
+    outputLines: seq[OutputLine]
+    hasError: bool  # Whether there's a fatal error (syntax/runtime)
 
 var debugState: DebuggerState
 
@@ -93,14 +98,32 @@ proc ensureCurrentLineVisible()
 proc scrollOutputToBottom()
 proc requestScrollToLine(line: int)
 
+proc addOutput(text: string, isError: bool = false) =
+  ## Add an output line
+  if debugState != nil:
+    debugState.outputLines.add(OutputLine(text: text, isError: isError))
+    scrollOutputToBottom()
+
+proc addError(text: string) =
+  ## Add an error output line
+  addOutput(text, isError = true)
+  if debugState != nil:
+    debugState.hasError = true
+
 proc syncOutput() =
   ## Sync output from VM to debugState
   if debugState == nil or debugState.vm == nil:
     return
   let hadOutput = debugState.outputLines.len
-  if debugState.vm.output.len > debugState.outputLines.len:
-    for i in debugState.outputLines.len ..< debugState.vm.output.len:
-      debugState.outputLines.add(debugState.vm.output[i])
+  if debugState.vm.output.len > 0:
+    # Count how many VM outputs we've already synced
+    var vmSynced = 0
+    for line in debugState.outputLines:
+      if not line.isError:
+        vmSynced += 1
+    # Add new VM outputs
+    for i in vmSynced ..< debugState.vm.output.len:
+      debugState.outputLines.add(OutputLine(text: debugState.vm.output[i], isError: false))
   # Auto-scroll to bottom if new output was added
   if debugState.outputLines.len > hadOutput:
     scrollOutputToBottom()
@@ -114,17 +137,29 @@ proc initDebugger(scriptPath: string) =
   debugState = DebuggerState(
     scriptPath: scriptPath,
     running: false,
-    outputLines: @[]
+    outputLines: @[],
+    hasError: false
   )
 
   if not fileExists(scriptPath):
     debugState.source = "# Error: File not found: " & scriptPath
     debugState.sourceLines = @[debugState.source]
+    addError("Error: File not found: " & scriptPath)
     return
 
   debugState.source = readFile(scriptPath)
   debugState.sourceLines = debugState.source.splitLines()
-  debugState.ast = parse(debugState.source)
+  
+  # Try to parse - catch syntax errors
+  try:
+    debugState.ast = parse(debugState.source)
+  except NimmyError as e:
+    addError("Syntax Error: " & e.msg)
+    return
+  except CatchableError as e:
+    addError("Parse Error: " & e.msg)
+    return
+  
   debugState.vm = newVM()
 
   # Register minimal built-ins
@@ -181,51 +216,47 @@ proc toggleBreakpoint(line: int) =
 
 proc stepDebugger() =
   ## Single step - execute one statement (step over)
-  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished:
+  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished or debugState.hasError:
     return
   try:
     debugState.vm.stepOver()
     syncOutput()
     ensureCurrentLineVisible()
   except NimmyError as e:
-    debugState.outputLines.add("Error: " & e.msg)
-    scrollOutputToBottom()
+    addError("Runtime Error: " & e.msg)
 
 proc stepIntoDebugger() =
   ## Step into - steps into function calls
-  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished:
+  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished or debugState.hasError:
     return
   try:
     debugState.vm.stepInto()
     syncOutput()
     ensureCurrentLineVisible()
   except NimmyError as e:
-    debugState.outputLines.add("Error: " & e.msg)
-    scrollOutputToBottom()
+    addError("Runtime Error: " & e.msg)
 
 proc stepOutDebugger() =
   ## Step out - run until we exit the current function
-  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished:
+  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished or debugState.hasError:
     return
   try:
     debugState.vm.stepOut()
     syncOutput()
     ensureCurrentLineVisible()
   except NimmyError as e:
-    debugState.outputLines.add("Error: " & e.msg)
-    scrollOutputToBottom()
+    addError("Runtime Error: " & e.msg)
 
 proc continueDebugger() =
   ## Continue execution until breakpoint or end
-  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished:
+  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished or debugState.hasError:
     return
   try:
     debugState.vm.continueExecution()
     syncOutput()
     ensureCurrentLineVisible()
   except NimmyError as e:
-    debugState.outputLines.add("Error: " & e.msg)
-    scrollOutputToBottom()
+    addError("Runtime Error: " & e.msg)
 
 # =============================================================================
 # Panel Constants
@@ -509,7 +540,7 @@ proc formatValue(v: Value, indent: int = 0): string =
 
 proc drawSourceCodeContent(frameId: string) =
   ## Draw source code content - call inside a frame template.
-  if debugState == nil or debugState.vm == nil:
+  if debugState == nil:
     text "(no script loaded)"
     return
 
@@ -525,8 +556,8 @@ proc drawSourceCodeContent(frameId: string) =
 
   for i, line in debugState.sourceLines:
     let lineNum = i + 1
-    let isCurrentLine = lineNum == debugState.vm.currentLine and not debugState.vm.isFinished
-    let hasBreakpoint = debugState.vm.hasBreakpoint(lineNum)
+    let isCurrentLine = debugState.vm != nil and lineNum == debugState.vm.currentLine and not debugState.vm.isFinished
+    let hasBreakpoint = debugState.vm != nil and debugState.vm.hasBreakpoint(lineNum)
 
     # The current position (sk.at) is already scroll-adjusted by the frame
     let lineY = sk.at.y
@@ -624,7 +655,7 @@ proc drawButton(label: string, x, y, w, h: float32, enabled: bool = true): bool 
 
 proc drawControlsContent() =
   ## Draw debug controls panel content.
-  if debugState == nil or debugState.vm == nil:
+  if debugState == nil:
     text "(no script loaded)"
     return
 
@@ -632,25 +663,27 @@ proc drawControlsContent() =
   let btnW = 70.0'f32
   let btnH = 26.0'f32
   let spacing = 6.0'f32
-  let notFinished = not debugState.vm.isFinished
+  
+  # Can run if VM exists, not finished, and no error
+  let canRun = debugState.vm != nil and not debugState.vm.isFinished and not debugState.hasError
 
   # Row 1: Execution controls
   var x = baseX
   var y = sk.at.y
 
-  if drawButton("Continue", x, y, btnW, btnH, notFinished):
+  if drawButton("Continue", x, y, btnW, btnH, canRun):
     continueDebugger()
   x += btnW + spacing
 
-  if drawButton("Step", x, y, 50, btnH, notFinished):
+  if drawButton("Step", x, y, 50, btnH, canRun):
     stepDebugger()
   x += 50 + spacing
 
-  if drawButton("Into", x, y, 45, btnH, notFinished):
+  if drawButton("Into", x, y, 45, btnH, canRun):
     stepIntoDebugger()
   x += 45 + spacing
 
-  if drawButton("Out", x, y, 40, btnH, notFinished):
+  if drawButton("Out", x, y, 40, btnH, canRun):
     stepOutDebugger()
   x += 40 + spacing
 
@@ -661,8 +694,12 @@ proc drawControlsContent() =
 
 proc drawStackTraceContent() =
   ## Draw stack trace content - call inside a frame template.
-  if debugState == nil or debugState.vm == nil:
+  if debugState == nil:
     text "(no script loaded)"
+    return
+  
+  if debugState.vm == nil:
+    # No VM means syntax error or other issue - show nothing
     return
 
   # Get actual font line height
@@ -687,7 +724,7 @@ proc drawStackTraceContent() =
 
 proc drawOutputContent(frameId: string) =
   ## Draw output content - call inside a frame template.
-  if debugState == nil or debugState.vm == nil:
+  if debugState == nil:
     text "(no script loaded)"
     return
 
@@ -700,7 +737,8 @@ proc drawOutputContent(frameId: string) =
     sk.advance(vec2(100, actualLineHeight))
   else:
     for line in debugState.outputLines:
-      discard sk.drawText("Code", line, sk.at, CodeColor)
+      let color = if line.isError: BreakpointColor else: CodeColor  # Red for errors
+      discard sk.drawText("Code", line.text, sk.at, color)
       sk.advance(vec2(sk.size.x - 32, actualLineHeight))
   
   # Scroll to bottom if requested - do this AFTER drawing content.
@@ -720,8 +758,12 @@ proc drawOutputContent(frameId: string) =
 
 proc drawVariablesContent() =
   ## Draw variables content - call inside a frame template.
-  if debugState == nil or debugState.vm == nil:
+  if debugState == nil:
     text "(no script loaded)"
+    return
+  
+  if debugState.vm == nil:
+    # No VM means syntax error - show nothing
     return
 
   # Get actual font line height
@@ -999,8 +1041,12 @@ proc main() =
     let statusY = window.size.y.float32 - statusBarHeight
     sk.drawRect(vec2(0, statusY), vec2(window.size.x.float32, statusBarHeight), rgbx(40, 42, 54, 255))
 
-    let statusText = if debugState != nil and debugState.vm != nil:
-      if debugState.vm.isFinished:
+    let statusText = if debugState != nil:
+      if debugState.hasError:
+        "Error | Press R to restart"
+      elif debugState.vm == nil:
+        "Failed to load | Press R to restart"
+      elif debugState.vm.isFinished:
         "Finished | Press R to restart"
       else:
         fmt"Line {debugState.vm.currentLine} | Space=Step, C=Continue, R=Restart"
