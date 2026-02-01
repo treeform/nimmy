@@ -1,0 +1,10 @@
+name: Tests
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: treeform/setup-nim-action@v6
+      - run: nim r tests/tests.nim
