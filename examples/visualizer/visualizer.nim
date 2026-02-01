@@ -2,10 +2,14 @@
 ## A graphical step-by-step debugger using Silky UI.
 
 import
-  std/[os, strformat, strutils, tables, sets, hashes],
+  std/[os, strformat, strutils, tables, sets, hashes, unicode],
   opengl, windy, bumpy, vmath, chroma,
   silky, silky/widgets,
   ../../src/nimmy/[types, parser, vm, utils]
+
+# Forward declarations for console state (defined later)
+var consoleInput {.threadvar.}: string
+var consoleInputActive {.threadvar.}: bool
 
 # =============================================================================
 # Atlas Setup
@@ -30,6 +34,12 @@ let window = newWindow(
 makeContextCurrent(window)
 loadExtensions()
 
+# Enable text input for console
+window.runeInputEnabled = true
+window.onRune = proc(rune: Rune) =
+  if consoleInputActive:
+    consoleInput.add($rune)
+
 let sk = newSilky("dist/atlas.png", "dist/atlas.json")
 
 proc snapToPixels(rect: Rect): Rect =
@@ -47,7 +57,7 @@ type
   PanelKind = enum
     pkSourceCode
     pkStackTrace
-    pkOutput
+    pkConsole
     pkVariables
     pkControls
 
@@ -823,8 +833,33 @@ proc drawStackTraceContent() =
     discard sk.drawText("Default", "Execution complete.", sk.at, SuccessColor)
     sk.advance(vec2(150, 20))
 
-proc drawOutputContent(frameId: string) =
-  ## Draw output content - call inside a frame template.
+proc executeConsoleInput() =
+  ## Execute the console input and display results
+  if debugState == nil or consoleInput.strip() == "":
+    return
+  
+  # Add input to output as a command echo
+  addOutput("> " & consoleInput)
+  
+  # If VM exists, run interactively
+  if debugState.vm != nil:
+    let res = debugState.vm.runInteractive(consoleInput)
+    if res.success:
+      # Show any output
+      for line in res.output:
+        addOutput(line)
+      # Show result value if not nil and not already printed
+      if res.value.kind != vkNil and res.output.len == 0:
+        addOutput($res.value)
+    else:
+      addError(res.error)
+  else:
+    addError("No VM available (syntax error in script)")
+  
+  consoleInput = ""
+
+proc drawConsoleContent(frameId: string) =
+  ## Draw console content with output and input field.
   if debugState == nil:
     text "(no script loaded)"
     return
@@ -842,18 +877,15 @@ proc drawOutputContent(frameId: string) =
       discard sk.drawText("Code", line.text, sk.at, color)
       sk.advance(vec2(sk.size.x - 32, actualLineHeight))
   
+  # Add some space before input area
+  sk.advance(vec2(0, 8))
+  
   # Scroll to bottom if requested - do this AFTER drawing content.
-  # Use sk.stretchAt.y which tracks the maximum Y position content was drawn to.
   if scrollOutputToBottomRequest and frameId in frameStates:
-    # sk.stretchAt.y is in scrolled coordinates, so we need to add back current scroll
-    # to get the actual content extent. sk.pos.y is the frame origin.
     let currentScroll = frameStates[frameId].scrollPos.y
-    let contentBottom = sk.stretchAt.y + currentScroll - sk.pos.y + 16  # +16 for padding
+    let contentBottom = sk.stretchAt.y + currentScroll - sk.pos.y + 16
     let visibleHeight = sk.size.y
-    
-    # Set scroll so the bottom of content aligns with bottom of visible area
     let maxScroll = max(0.0, contentBottom - visibleHeight)
-    
     frameStates[frameId].scrollPos.y = maxScroll
     scrollOutputToBottomRequest = false
 
@@ -895,18 +927,45 @@ proc drawVariablesContent() =
 proc drawPanelContent(panel: Panel, contentRect: Rect) =
   let frameId = "panel:" & panel.name & ":" & $cast[uint](panel)
   
-  frame(frameId, contentRect.xy, contentRect.wh):
-    case panel.kind
-    of pkSourceCode:
-      drawSourceCodeContent(frameId)
-    of pkStackTrace:
-      drawStackTraceContent()
-    of pkOutput:
-      drawOutputContent(frameId)
-    of pkVariables:
-      drawVariablesContent()
-    of pkControls:
-      drawControlsContent()
+  if panel.kind == pkConsole:
+    # Console has special layout: output area + input field
+    let inputHeight = 28.0'f32
+    let outputRect = rect(contentRect.x, contentRect.y, contentRect.w, contentRect.h - inputHeight)
+    let inputRect = rect(contentRect.x, contentRect.y + contentRect.h - inputHeight, contentRect.w, inputHeight)
+    
+    # Draw output area
+    frame(frameId, outputRect.xy, outputRect.wh):
+      drawConsoleContent(frameId)
+    
+    # Draw input field (outside scrollable area)
+    let inputBg = if consoleInputActive: rgbx(60, 62, 80, 255) else: rgbx(40, 42, 54, 255)
+    sk.drawRect(inputRect.xy, inputRect.wh, inputBg)
+    
+    # Draw input border
+    sk.drawRect(vec2(inputRect.x, inputRect.y), vec2(inputRect.w, 1), rgbx(80, 82, 100, 255))
+    
+    # Draw prompt and input text
+    let prompt = "> "
+    let displayText = prompt & consoleInput & (if consoleInputActive: "_" else: "")
+    let textColor = if consoleInputActive: CodeColor else: DimTextColor
+    discard sk.drawText("Code", displayText, vec2(inputRect.x + 8, inputRect.y + 6), textColor)
+    
+    # Click to activate input
+    if mouseInsideClip(inputRect) and window.buttonPressed[MouseLeft]:
+      consoleInputActive = true
+  else:
+    frame(frameId, contentRect.xy, contentRect.wh):
+      case panel.kind
+      of pkSourceCode:
+        drawSourceCodeContent(frameId)
+      of pkStackTrace:
+        drawStackTraceContent()
+      of pkVariables:
+        drawVariablesContent()
+      of pkControls:
+        drawControlsContent()
+      of pkConsole:
+        discard  # Handled above
 
 # =============================================================================
 # Panel Drawing
@@ -1014,7 +1073,7 @@ proc initRootArea() =
   rootArea.areas[0].split(Horizontal)
   rootArea.areas[0].split = 0.75
   gSourceCodePanel = rootArea.areas[0].areas[0].addPanel("Source Code", pkSourceCode)
-  gOutputPanel = rootArea.areas[0].areas[1].addPanel("Output", pkOutput)
+  gOutputPanel = rootArea.areas[0].areas[1].addPanel("Console", pkConsole)
 
   # Right column: Controls (top) + Variables (middle) + Stack Trace (bottom)
   rootArea.areas[1].split(Horizontal)
@@ -1056,20 +1115,36 @@ proc main() =
     sk.cursor = Cursor(kind: ArrowCursor)
 
     # Handle keyboard shortcuts
-    if window.buttonPressed[KeySpace] or window.buttonPressed[KeyEnter]:
-      stepDebugger()
+    if consoleInputActive:
+      # Console input mode - handle typing
+      if window.buttonPressed[KeyEnter]:
+        executeConsoleInput()
+        consoleInputActive = false
+      elif window.buttonPressed[KeyEscape]:
+        consoleInputActive = false
+      elif window.buttonPressed[KeyBackspace]:
+        if consoleInput.len > 0:
+          consoleInput = consoleInput[0..^2]
+    else:
+      # Normal mode - debug shortcuts
+      if window.buttonPressed[KeySpace]:
+        stepDebugger()
+      
+      if window.buttonPressed[KeyEnter]:
+        # Activate console input
+        consoleInputActive = true
 
-    if window.buttonPressed[KeyC]:
-      continueDebugger()
+      if window.buttonPressed[KeyC]:
+        continueDebugger()
 
-    if window.buttonPressed[KeyR]:
-      initDebugger(scriptPath)
+      if window.buttonPressed[KeyR]:
+        initDebugger(scriptPath)
 
-    if window.buttonPressed[KeyI]:
-      stepIntoDebugger()
+      if window.buttonPressed[KeyI]:
+        stepIntoDebugger()
 
-    if window.buttonPressed[KeyO]:
-      stepOutDebugger()
+      if window.buttonPressed[KeyO]:
+        stepOutDebugger()
 
     # Update Dragging Split
     if dragArea != nil:
@@ -1150,7 +1225,7 @@ proc main() =
       elif debugState.vm.isFinished:
         "Finished | Press R to restart"
       else:
-        fmt"Line {debugState.vm.currentLine} | Space=Step, C=Continue, R=Restart"
+        fmt"Line {debugState.vm.currentLine} | Space=Step, C=Continue, R=Restart, Enter=Console"
     else:
       "No script loaded"
 

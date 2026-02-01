@@ -5,6 +5,7 @@ import
   std/strutils,
   test_stepping,
   test_debugging,
+  test_interactive,
   tests
 
 proc main() =
@@ -28,6 +29,12 @@ proc main() =
   totalFailed += debuggingFailed
   echo ""
   
+  # Run interactive tests
+  let (interactivePassed, interactiveFailed) = runInteractiveTests()
+  totalPassed += interactivePassed
+  totalFailed += interactiveFailed
+  echo ""
+  
   # Run gold master tests
   let (goldPassed, goldFailed) = runGoldMasterTests()
   totalPassed += goldPassed
@@ -39,9 +46,10 @@ proc main() =
   echo "SUMMARY"
   echo "=" .repeat(60)
   echo ""
-  echo "  Stepping tests:    " & $steppingPassed & " passed, " & $steppingFailed & " failed"
-  echo "  Debugging tests:   " & $debuggingPassed & " passed, " & $debuggingFailed & " failed"
-  echo "  Gold master tests: " & $goldPassed & " passed, " & $goldFailed & " failed"
+  echo "  Stepping tests:     " & $steppingPassed & " passed, " & $steppingFailed & " failed"
+  echo "  Debugging tests:    " & $debuggingPassed & " passed, " & $debuggingFailed & " failed"
+  echo "  Interactive tests:  " & $interactivePassed & " passed, " & $interactiveFailed & " failed"
+  echo "  Gold master tests:  " & $goldPassed & " passed, " & $goldFailed & " failed"
   echo ""
   echo "  TOTAL: " & $totalPassed & " passed, " & $totalFailed & " failed"
   echo ""
