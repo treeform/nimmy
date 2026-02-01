@@ -1,0 +1,43 @@
+# Simple function
+proc greet(name) =
+  echo "Hello, " & name & "!"
+
+greet("Alice")
+greet("Bob")
+
+# Function with return value
+proc add(a, b) =
+  return a + b
+
+let sum = add(3, 4)
+echo sum
+
+# Function calling function
+proc square(x) =
+  return x * x
+
+proc sumOfSquares(a, b) =
+  return add(square(a), square(b))
+
+echo sumOfSquares(3, 4)
+
+# Recursive function
+proc factorial(n) =
+  if n <= 1:
+    return 1
+  return n * factorial(n - 1)
+
+echo factorial(5)
+
+# Closure
+proc makeCounter() =
+  var count = 0
+  proc increment() =
+    count = count + 1
+    return count
+  return increment
+
+let counter = makeCounter()
+echo counter()
+echo counter()
+echo counter()

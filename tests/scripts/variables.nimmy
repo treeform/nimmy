@@ -1,0 +1,10 @@
+# Variable declarations
+let name = "Nimmy"
+var count = 0
+
+echo name
+echo count
+
+# Modify var
+count = 42
+echo count

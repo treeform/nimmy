@@ -1,0 +1,31 @@
+# Comparison operators
+
+# Equality
+echo 5 == 5
+echo 5 == 6
+echo "hello" == "hello"
+echo "hello" == "world"
+
+# Inequality
+echo 5 != 6
+echo 5 != 5
+
+# Less than / greater than
+echo 3 < 5
+echo 5 < 3
+echo 5 > 3
+echo 3 > 5
+
+# Less/greater than or equal
+echo 5 <= 5
+echo 5 <= 6
+echo 5 >= 5
+echo 4 >= 5
+
+# Boolean logic
+echo true and true
+echo true and false
+echo true or false
+echo false or false
+echo not true
+echo not false

@@ -1,0 +1,8 @@
+Alice
+30
+Bob
+25
+Hero
+10
+Alice is 30 years old
+Bob is 25 years old

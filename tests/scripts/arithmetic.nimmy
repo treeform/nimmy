@@ -1,0 +1,14 @@
+# Basic arithmetic
+echo 2 + 3
+echo 10 - 4
+echo 3 * 4
+echo 15 / 3
+echo 17 % 5
+
+# Order of operations
+echo 2 + 3 * 4
+echo (2 + 3) * 4
+
+# Negative numbers
+echo -5
+echo 10 + -3

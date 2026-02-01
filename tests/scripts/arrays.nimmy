@@ -1,0 +1,29 @@
+# Array creation
+let numbers = [1, 2, 3, 4, 5]
+let names = ["Alice", "Bob", "Charlie"]
+
+echo len(numbers)
+echo len(names)
+
+# Array indexing
+echo numbers[0]
+echo numbers[2]
+echo names[1]
+
+# Array iteration
+echo "Numbers:"
+for n in numbers:
+  echo n
+
+# Array modification
+var items = [10, 20, 30]
+items[1] = 25
+echo items[1]
+
+# Push and pop
+var stack = [1, 2]
+push(stack, 3)
+echo len(stack)
+let top = pop(stack)
+echo top
+echo len(stack)

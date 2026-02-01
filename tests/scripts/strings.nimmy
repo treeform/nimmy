@@ -1,0 +1,16 @@
+# String operations
+let greeting = "Hello"
+let target = "World"
+
+echo greeting
+echo target
+
+# String concatenation
+echo greeting & ", " & target & "!"
+
+# String length
+echo len(greeting)
+
+# String indexing
+echo greeting[0]
+echo greeting[4]

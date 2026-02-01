@@ -1,0 +1,31 @@
+# For loop with range (exclusive)
+echo "Counting 0 to 4:"
+for i in 0 ..< 5:
+  echo i
+
+# For loop with range (inclusive)
+echo "Counting 1 to 3:"
+for i in 1 .. 3:
+  echo i
+
+# While loop
+var n = 3
+echo "Countdown:"
+while n > 0:
+  echo n
+  n = n - 1
+echo "Blast off!"
+
+# Break statement
+echo "With break:"
+for i in 0 ..< 10:
+  if i == 3:
+    break
+  echo i
+
+# Continue statement
+echo "With continue (skip 2):"
+for i in 0 ..< 5:
+  if i == 2:
+    continue
+  echo i

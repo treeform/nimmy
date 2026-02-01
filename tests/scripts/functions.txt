@@ -1,0 +1,8 @@
+Hello, Alice!
+Hello, Bob!
+7
+25
+120
+1
+2
+3

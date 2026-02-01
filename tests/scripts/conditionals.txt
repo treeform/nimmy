@@ -1,0 +1,5 @@
+x is greater than 5
+x is not less than 5
+Grade: B
+x is between 5 and 15
+x is outside 5-8 range

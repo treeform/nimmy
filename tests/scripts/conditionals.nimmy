@@ -1,0 +1,29 @@
+# If statements
+let x = 10
+
+if x > 5:
+  echo "x is greater than 5"
+
+if x < 5:
+  echo "x is less than 5"
+else:
+  echo "x is not less than 5"
+
+# Elif chains
+let score = 85
+
+if score >= 90:
+  echo "Grade: A"
+elif score >= 80:
+  echo "Grade: B"
+elif score >= 70:
+  echo "Grade: C"
+else:
+  echo "Grade: F"
+
+# Boolean expressions
+if x > 5 and x < 15:
+  echo "x is between 5 and 15"
+
+if x < 5 or x > 8:
+  echo "x is outside 5-8 range"

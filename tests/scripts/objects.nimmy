@@ -1,0 +1,27 @@
+# Object type definition
+type Person = object
+  name
+  age
+
+# Create object
+let alice = Person("Alice", 30)
+let bob = Person("Bob", 25)
+
+# Access fields
+echo alice.name
+echo alice.age
+echo bob.name
+echo bob.age
+
+# Modify object fields
+var player = Person("Hero", 1)
+player.age = 10
+echo player.name
+echo player.age
+
+# Object in function
+proc introduce(p) =
+  echo p.name & " is " & str(p.age) & " years old"
+
+introduce(alice)
+introduce(bob)

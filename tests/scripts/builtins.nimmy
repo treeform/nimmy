@@ -1,0 +1,31 @@
+# Built-in functions test
+
+# len
+echo len("hello")
+echo len([1, 2, 3])
+
+# str
+echo str(42)
+echo str(3.14)
+echo str(true)
+
+# int and float
+echo int(3.7)
+echo float(5)
+
+# typeof
+echo typeof(42)
+echo typeof("hello")
+echo typeof([1, 2])
+echo typeof(true)
+
+# abs
+echo abs(-5)
+echo abs(5)
+echo abs(-3.14)
+
+# min and max
+echo min(5, 3)
+echo max(5, 3)
+echo min("apple", "banana")
+echo max("apple", "banana")
