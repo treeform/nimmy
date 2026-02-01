@@ -1,24 +1,38 @@
 ## Simple step-by-step debugger for Nimmy scripts.
 ## Press Enter to advance to the next statement.
+
 import
   std/[os, strutils, tables],
   ../src/nimmy/[types, parser, vm, utils]
 
 proc clearScreen() =
-  # Cross-platform clear screen using ANSI escape codes
+  ## Cross-platform clear screen using ANSI escape codes.
   stdout.write("\x1B[2J\x1B[H")
   stdout.flushFile()
+
 proc formatValue(v: Value, indent = 0): string =
   ## Formats a value with nested structure display.
   let pad = "  ".repeat(indent)
+  
   if v.isNil:
     return pad & "nil"
+  
   case v.kind
-  of vkNil: pad & "nil"
-  of vkBool: pad & $v.boolVal
-  of vkInt: pad & $v.intVal
-  of vkFloat: pad & $v.floatVal
-  of vkString: pad & "\"" & v.strVal & "\""
+  of vkNil:
+    pad & "nil"
+  
+  of vkBool:
+    pad & $v.boolVal
+  
+  of vkInt:
+    pad & $v.intVal
+  
+  of vkFloat:
+    pad & $v.floatVal
+  
+  of vkString:
+    pad & "\"" & v.strVal & "\""
+  
   of vkArray:
     if v.arrayVal.len == 0:
       pad & "[]"
@@ -29,6 +43,7 @@ proc formatValue(v: Value, indent = 0): string =
         lines.add(formatValue(elem, indent + 1) & comma)
       lines.add(pad & "]")
       lines.join("\n")
+  
   of vkSet:
     if v.setVal.len == 0:
       pad & "{}"
@@ -39,6 +54,7 @@ proc formatValue(v: Value, indent = 0): string =
         lines.add(formatValue(elem, indent + 1) & comma)
       lines.add(pad & "}")
       lines.join("\n")
+  
   of vkTable:
     if v.tableVal.len == 0:
       pad & "{}"
@@ -51,24 +67,37 @@ proc formatValue(v: Value, indent = 0): string =
         i += 1
       lines.add(pad & "}")
       lines.join("\n")
+  
   of vkObject:
     var lines = @[pad & v.objType & " {"]
     for fieldName, fieldVal in v.objFields:
       lines.add(pad & "  " & fieldName & ": " & formatValue(fieldVal, 0).strip())
     lines.add(pad & "}")
     lines.join("\n")
-  of vkProc: pad & "<proc " & v.procName & ">"
-  of vkNativeProc: pad & "<native " & v.nativeName & ">"
-  of vkType: pad & "<type " & v.typeNameVal & ">"
+  
+  of vkProc:
+    pad & "<proc " & v.procName & ">"
+  
+  of vkNativeProc:
+    pad & "<native " & v.nativeName & ">"
+  
+  of vkType:
+    pad & "<type " & v.typeNameVal & ">"
+  
   of vkRange:
-    if v.rangeInclusive: pad & $v.rangeStart & ".." & $v.rangeEnd
-    else: pad & $v.rangeStart & "..<" & $v.rangeEnd
+    if v.rangeInclusive:
+      pad & $v.rangeStart & ".." & $v.rangeEnd
+    else:
+      pad & $v.rangeStart & "..<" & $v.rangeEnd
+
 proc printLocals(vm: VM) =
   ## Prints all local variables with nested structure.
   echo "--- Local Variables ---"
+  
   var hasVars = false
   var scope = vm.currentScope
   var depth = 0
+  
   while scope != nil:
     for name, value in scope.vars:
       hasVars = true
@@ -77,26 +106,37 @@ proc printLocals(vm: VM) =
       echo formatValue(value, 1)
     scope = scope.parent
     depth += 1
+  
   if not hasVars:
     echo "  (none)"
+  
   echo ""
+
 proc printCurrentState(source: string, lineNum: int, vm: VM) =
   ## Prints the current execution state.
   clearScreen()
+  
   echo "=========================================="
   echo "  NIMMY DEBUGGER - Line " & $lineNum
   echo "=========================================="
   echo ""
+  
+  # Show source context
   let lines = source.splitLines()
   let startLine = max(1, lineNum - 2)
   let endLine = min(lines.len, lineNum + 2)
+  
   echo "--- Source ---"
   for i in startLine .. endLine:
     let marker = if i == lineNum: " >> " else: "    "
     let lineContent = if i <= lines.len: lines[i - 1] else: ""
     echo marker & $i & " | " & lineContent
   echo ""
+  
+  # Show local variables
   printLocals(vm)
+  
+  # Show output
   echo "--- Output ---"
   if vm.output.len > 0:
     for line in vm.output:
@@ -104,15 +144,19 @@ proc printCurrentState(source: string, lineNum: int, vm: VM) =
   else:
     echo "  (none)"
   echo ""
+  
   echo "[Press Enter to continue, 'q' to quit]"
+
 proc waitForInput(): bool =
   ## Waits for user input, returns false if user wants to quit.
   let input = stdin.readLine()
   input.toLowerAscii() != "q"
+
 proc evalWithDebug(vm: VM, node: Node, source: string): Value =
   ## Evaluates a node with debugging pauses at each statement.
   if node.isNil:
     return nilValue()
+  
   case node.kind
   of nkProgram, nkBlock:
     result = nilValue()
@@ -123,16 +167,24 @@ proc evalWithDebug(vm: VM, node: Node, source: string): Value =
           echo "Debugger terminated."
           quit(0)
       result = vm.eval(stmt)
+  
   else:
     result = vm.eval(node)
+
 proc runDebugger(scriptPath: string) =
   ## Main debugger entry point.
+  
+  # Validate script file
   if not fileExists(scriptPath):
     echo "Error: File not found: " & scriptPath
     quit(1)
+  
+  # Load and parse the script
   let source = readFile(scriptPath)
   let ast = parse(source)
   let vm = newVM()
+  
+  # Register minimal built-ins for the debugger
   vm.addProc("len") do (args: seq[Value]) -> Value:
     if args.len != 1:
       raise newException(RuntimeError, "len() takes exactly 1 argument")
@@ -141,10 +193,12 @@ proc runDebugger(scriptPath: string) =
     of vkArray: intValue(args[0].arrayVal.len)
     of vkTable: intValue(args[0].tableVal.len)
     else: raise newException(RuntimeError, "Cannot get length of " & typeName(args[0]))
+  
   vm.addProc("str") do (args: seq[Value]) -> Value:
     if args.len != 1:
       raise newException(RuntimeError, "str() takes exactly 1 argument")
     stringValue($args[0])
+  
   vm.addProc("add") do (args: seq[Value]) -> Value:
     if args.len != 2:
       raise newException(RuntimeError, "add() takes exactly 2 arguments")
@@ -152,6 +206,8 @@ proc runDebugger(scriptPath: string) =
       raise newException(RuntimeError, "First argument to add() must be an array")
     args[0].arrayVal.add(args[1])
     args[0]
+  
+  # Show welcome screen
   clearScreen()
   echo "=========================================="
   echo "  NIMMY DEBUGGER"
@@ -163,8 +219,12 @@ proc runDebugger(scriptPath: string) =
   echo "Press 'q' and Enter to quit at any time."
   echo ""
   discard stdin.readLine()
+  
+  # Run the debugger
   try:
     discard evalWithDebug(vm, ast, source)
+    
+    # Show final state
     printCurrentState(source, 0, vm)
     echo "--- Execution Complete ---"
     echo ""
@@ -174,10 +234,12 @@ proc runDebugger(scriptPath: string) =
         echo "  " & line
     else:
       echo "  (none)"
+  
   except NimmyError as e:
     echo ""
     echo "Error: " & e.msg
     quit(1)
+
 when isMainModule:
   if paramCount() < 1:
     echo "Usage: debugger <script.nimmy>"
@@ -185,4 +247,5 @@ when isMainModule:
     echo "A simple step-by-step debugger for Nimmy scripts."
     echo "Press Enter to advance to the next statement."
     quit(0)
+  
   runDebugger(paramStr(1))
