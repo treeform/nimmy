@@ -4,8 +4,9 @@
 import nimmy_types
 import std/[strformat, strutils, tables]
 
-# Forward declaration
+# Forward declarations
 proc valueRepr*(v: Value): string
+proc typeName*(v: Value): string
 
 # Convert Value to string for display
 proc `$`*(v: Value): string =
@@ -153,7 +154,7 @@ proc compare*(a, b: Value): int =
     return cmp(a.floatVal, b.intVal.float64)
   if a.kind == vkString and b.kind == vkString:
     return cmp(a.strVal, b.strVal)
-  raise newException(RuntimeError, fmt"Cannot compare {a.kind} and {b.kind}")
+  raise newException(RuntimeError, "Cannot compare " & typeName(a) & " and " & typeName(b))
 
 # Convert Value to float for arithmetic
 proc toFloat*(v: Value): float64 =

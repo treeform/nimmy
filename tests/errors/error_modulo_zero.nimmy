@@ -1,0 +1,2 @@
+# Error: Modulo by zero
+let x = 10 % 0

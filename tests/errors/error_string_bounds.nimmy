@@ -1,0 +1,3 @@
+# Error: String index out of bounds
+let s = "hi"
+echo s[10]

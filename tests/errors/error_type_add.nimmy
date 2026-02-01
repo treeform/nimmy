@@ -1,0 +1,2 @@
+# Error: Cannot add incompatible types
+let x = "hello" + 5

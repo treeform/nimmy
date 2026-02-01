@@ -1,0 +1,2 @@
+# Error: Cannot negate a string
+let x = -"hello"

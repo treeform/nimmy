@@ -1,0 +1,3 @@
+# Error: Array index must be integer
+let arr = [1, 2, 3]
+echo arr["one"]

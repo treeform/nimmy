@@ -1,0 +1,3 @@
+# Error: Cannot iterate over an integer
+for x in 42:
+  echo x

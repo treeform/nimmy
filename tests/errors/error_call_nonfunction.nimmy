@@ -1,0 +1,3 @@
+# Error: Calling something that isn't a function
+let x = 42
+x()

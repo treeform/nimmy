@@ -1,0 +1,5 @@
+# Error: Calling function with wrong number of arguments
+proc greet(name, age) =
+  echo name
+
+greet("Alice")

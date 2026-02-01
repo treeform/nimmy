@@ -1,0 +1,3 @@
+# Error: Negative array index
+let arr = [1, 2, 3]
+echo arr[-1]

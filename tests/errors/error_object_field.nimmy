@@ -1,0 +1,7 @@
+# Error: Object has no such field
+type Person = object
+  name
+  age
+
+let p = Person("Alice", 30)
+echo p.salary

@@ -1,0 +1,2 @@
+# Error: Cannot multiply incompatible types
+let x = "hello" * "world"

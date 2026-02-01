@@ -1,0 +1,3 @@
+# Error: Assigning to a constant (let)
+let x = 5
+x = 10

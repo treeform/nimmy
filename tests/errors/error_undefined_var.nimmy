@@ -1,0 +1,2 @@
+# Error: Using an undefined variable
+echo x

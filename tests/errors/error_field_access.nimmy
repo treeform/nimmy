@@ -1,0 +1,3 @@
+# Error: Accessing field on non-object
+let x = 42
+echo x.foo

@@ -1,0 +1,2 @@
+# Error: Cannot compare incompatible types
+let x = "hello" < 5
