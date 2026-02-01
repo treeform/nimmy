@@ -9,7 +9,7 @@
 
 import types
 import utils
-import std/[strformat, tables, strutils]
+import std/[strformat, tables, strutils, sets]
 
 type
   ControlFlow = enum
@@ -54,6 +54,8 @@ type
     frames: seq[ExecutionFrame]  ## Stack of execution frames
     currentLine*: int            ## Current line number
     isFinished*: bool            ## Whether execution is complete
+    # Debugging
+    breakpoints*: HashSet[int]   ## Line numbers with breakpoints
 
 proc newVM*(): VM =
   let global = newScope()
@@ -66,7 +68,8 @@ proc newVM*(): VM =
     returnValue: nil,
     frames: @[],
     currentLine: 0,
-    isFinished: true
+    isFinished: true,
+    breakpoints: initHashSet[int]()
   )
 
 proc error(vm: VM, msg: string, line, col: int) =
@@ -1139,6 +1142,86 @@ proc eval*(vm: VM, node: Node): Value =
   while not vm.isFinished:
     vm.step()
   return vm.returnValue
+
+# =============================================================================
+# Debugging Primitives
+# =============================================================================
+
+proc callDepth*(vm: VM): int =
+  ## Return the current call stack depth (number of function frames).
+  result = 0
+  for frame in vm.frames:
+    if frame.kind == fkFunction:
+      result += 1
+
+proc stepInto*(vm: VM) =
+  ## Step into: execute one statement, stepping into function calls.
+  ## This is the same as step() - function calls push a frame and the next
+  ## step executes inside the function.
+  vm.step()
+
+proc stepOver*(vm: VM) =
+  ## Step over: execute one statement, running any function calls to completion.
+  ## If the current statement is a function call, the entire function executes.
+  if vm.isFinished:
+    return
+  
+  let startDepth = vm.frames.len
+  vm.step()
+  
+  # If we entered a new frame (function call), run until we're back
+  while not vm.isFinished and vm.frames.len > startDepth:
+    vm.step()
+
+proc stepOut*(vm: VM) =
+  ## Step out: run until we exit the current function frame.
+  ## If we're at the top level, runs to completion.
+  if vm.isFinished:
+    return
+  
+  let startDepth = vm.frames.len
+  
+  # Keep stepping until we're at a lower depth (exited a frame)
+  while not vm.isFinished:
+    vm.step()
+    if vm.frames.len < startDepth:
+      break
+
+proc addBreakpoint*(vm: VM, line: int) =
+  ## Add a breakpoint at the given line.
+  vm.breakpoints.incl(line)
+
+proc removeBreakpoint*(vm: VM, line: int) =
+  ## Remove a breakpoint from the given line.
+  vm.breakpoints.excl(line)
+
+proc clearBreakpoints*(vm: VM) =
+  ## Remove all breakpoints.
+  vm.breakpoints.clear()
+
+proc hasBreakpoint*(vm: VM, line: int): bool =
+  ## Check if there's a breakpoint at the given line.
+  line in vm.breakpoints
+
+proc continueExecution*(vm: VM) =
+  ## Continue execution until a breakpoint is hit or execution finishes.
+  ## After loading, call step() once first to advance past the initial line,
+  ## then run until we hit a breakpoint.
+  if vm.isFinished:
+    return
+  
+  # Step at least once
+  vm.step()
+  
+  # Continue until breakpoint or finished
+  while not vm.isFinished:
+    if vm.currentLine in vm.breakpoints:
+      break
+    vm.step()
+
+proc runToBreakpoint*(vm: VM) =
+  ## Alias for continueExecution - run until breakpoint or end.
+  vm.continueExecution()
 
 # =============================================================================
 # Utility Functions

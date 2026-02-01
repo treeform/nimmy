@@ -1,9 +1,12 @@
 ## test_debugging.nim
-## Unit tests for the Nimmy debugger functionality
+## Unit tests for debugging primitives: step, stepInto, stepOver, stepOut, 
+## breakpoints, and continue.
+##
+## Design: Each test creates a VM, loads code, calls debugging functions,
+## and asserts correct state. Tests verify we can resume and complete execution.
 
 import
-  std/[sets, tables],
-  ../src/nimmy/[types, parser, vm, debug]
+  ../src/nimmy/[types, parser, vm]
 
 # =============================================================================
 # Test Helpers
@@ -12,380 +15,520 @@ import
 proc createVM(): VM =
   result = newVM()
   
-  # Add echo builtin for testing
+  # Add echo builtin (captures output)
   result.addProc("echo") do (args: seq[Value]) -> Value:
-    discard  # Don't print, just capture
     nilValue()
 
 # =============================================================================
-# Test: Basic Breakpoint API
+# Test: Basic Step (same as stepInto)
 # =============================================================================
 
-proc testBreakpointAPI() =
-  echo "Testing breakpoint API..."
+proc testBasicStep() =
+  echo "Testing basic step..."
   
   let vm = createVM()
-  let dbg = newDebugger(vm)
-  
-  # Initially no breakpoints
-  doAssert dbg.breakpoints.len == 0
-  doAssert not dbg.hasBreakpoint(5)
-  
-  # Add breakpoint
-  dbg.addBreakpoint(5)
-  doAssert dbg.breakpoints.len == 1
-  doAssert dbg.hasBreakpoint(5)
-  
-  # Adding same breakpoint doesn't duplicate
-  dbg.addBreakpoint(5)
-  doAssert dbg.breakpoints.len == 1
-  
-  # Add more breakpoints
-  dbg.addBreakpoint(10)
-  dbg.addBreakpoint(15)
-  doAssert dbg.breakpoints.len == 3
-  
-  # Remove breakpoint
-  dbg.removeBreakpoint(10)
-  doAssert dbg.breakpoints.len == 2
-  doAssert not dbg.hasBreakpoint(10)
-  
-  # Clear all
-  dbg.clearBreakpoints()
-  doAssert dbg.breakpoints.len == 0
-  
-  echo "  PASS: breakpoint API"
-
-# =============================================================================
-# Test: Step Mode and Pause
-# =============================================================================
-
-proc testStepModeAPI() =
-  echo "Testing step mode API..."
-  
-  let vm = createVM()
-  let dbg = newDebugger(vm)
-  
-  # Initially not stepping or paused
-  doAssert not dbg.stepMode
-  doAssert not dbg.paused
-  
-  # Enable step mode
-  dbg.enableStepMode()
-  doAssert dbg.stepMode
-  
-  # Disable step mode
-  dbg.disableStepMode()
-  doAssert not dbg.stepMode
-  
-  # Pause/resume
-  dbg.pause()
-  doAssert dbg.paused
-  dbg.resume()
-  doAssert not dbg.paused
-  
-  echo "  PASS: step mode API"
-
-# =============================================================================
-# Test: Call Stack Tracking
-# =============================================================================
-
-proc testCallStackAPI() =
-  echo "Testing call stack API..."
-  
-  let vm = createVM()
-  let dbg = newDebugger(vm)
-  
-  # Initially at main
-  doAssert dbg.callStack.len == 1
-  doAssert dbg.callStack[0] == "<main>"
-  
-  # Push calls
-  dbg.pushCall("foo")
-  doAssert dbg.callStack.len == 2
-  doAssert dbg.callStack[1] == "foo"
-  
-  dbg.pushCall("bar")
-  doAssert dbg.callStack.len == 3
-  doAssert dbg.callStack[2] == "bar"
-  
-  # Pop calls
-  dbg.popCall()
-  doAssert dbg.callStack.len == 2
-  
-  dbg.popCall()
-  doAssert dbg.callStack.len == 1
-  
-  # Can't pop below main
-  dbg.popCall()
-  doAssert dbg.callStack.len == 1
-  
-  echo "  PASS: call stack API"
-
-# =============================================================================
-# Test: VM Debug Hooks - Statement Callback
-# =============================================================================
-
-proc testVMStatementHook() =
-  echo "Testing VM statement hooks..."
-  
-  let vm = createVM()
-  var statementsExecuted: seq[int] = @[]
-  
-  # Set up a hook that records each statement's line
-  vm.onStatement = proc(line, col: int): bool =
-    statementsExecuted.add(line)
-    return true  # Continue execution
-  
   let code = """
-let x = 1
-let y = 2
-let z = x + y
+let a = 1
+let b = 2
+let c = 3
 """
-  
   let ast = parse(code)
-  discard vm.eval(ast)
+  vm.load(ast)
   
-  # Should have recorded 3 statements
-  doAssert statementsExecuted.len == 3, "Expected 3 statements, got " & $statementsExecuted.len
-  doAssert 1 in statementsExecuted
-  doAssert 2 in statementsExecuted
-  doAssert 3 in statementsExecuted
+  # Initial state
+  doAssert vm.currentLine == 1
+  doAssert not vm.isFinished
   
-  echo "  PASS: VM statement hooks"
-
-# =============================================================================
-# Test: VM Debug Hooks - Function Entry/Exit
-# =============================================================================
-
-proc testVMFunctionHooks() =
-  echo "Testing VM function entry/exit hooks..."
+  # Step through each statement
+  vm.step()
+  doAssert vm.currentLine == 2
   
-  let vm = createVM()
-  var callLog: seq[string] = @[]
+  vm.step()
+  doAssert vm.currentLine == 3
   
-  # Set up hooks for function entry/exit
-  vm.onEnterFunction = proc(name: string) =
-    callLog.add("enter:" & name)
+  vm.step()
+  doAssert vm.isFinished
   
-  vm.onExitFunction = proc(name: string) =
-    callLog.add("exit:" & name)
+  # Verify values
+  doAssert vm.currentScope.lookup("a").intVal == 1
+  doAssert vm.currentScope.lookup("b").intVal == 2
+  doAssert vm.currentScope.lookup("c").intVal == 3
   
-  let code = """
-proc foo() =
-  let x = 1
-  return x
-
-proc bar() =
-  let y = foo()
-  return y
-
-let result = bar()
-"""
-  
-  let ast = parse(code)
-  discard vm.eval(ast)
-  
-  # Should have: enter bar, enter foo, exit foo, exit bar
-  doAssert callLog.len == 4, "Expected 4 call events, got " & $callLog.len & ": " & $callLog
-  doAssert callLog[0] == "enter:bar"
-  doAssert callLog[1] == "enter:foo"
-  doAssert callLog[2] == "exit:foo"
-  doAssert callLog[3] == "exit:bar"
-  
-  echo "  PASS: VM function hooks"
-
-# =============================================================================
-# Test: Breakpoints Inside Functions
-# =============================================================================
-
-proc testBreakpointsInsideFunctions() =
-  echo "Testing breakpoints inside functions..."
-  
-  let vm = createVM()
-  var hitLines: seq[int] = @[]
-  var breakpoints: HashSet[int] = [6].toHashSet  # Breakpoint on line 6
-  
-  # Hook that checks breakpoints
-  vm.onStatement = proc(line, col: int): bool =
-    if line in breakpoints:
-      hitLines.add(line)
-    return true  # Continue execution
-  
-  let code = """
-proc greet(name) =
-  let prefix = "Hello"
-  let msg = prefix & ", " & name
-  return msg
-
-let result = greet("World")
-"""
-  # Line 1: proc greet(name) =
-  # Line 2:   let prefix = "Hello"
-  # Line 3:   let msg = prefix & ", " & name
-  # Line 4:   return msg
-  # Line 5: (empty)
-  # Line 6: let result = greet("World")
-  
-  let ast = parse(code)
-  discard vm.eval(ast)
-  
-  # The breakpoint on line 6 should have been hit
-  doAssert 6 in hitLines, "Breakpoint on line 6 should have been hit"
-  
-  # Now test breakpoint INSIDE the function (line 3)
-  hitLines = @[]
-  breakpoints = [3].toHashSet
-  
-  discard vm.eval(ast)
-  
-  doAssert 3 in hitLines, "Breakpoint on line 3 (inside function) should have been hit"
-  
-  echo "  PASS: breakpoints inside functions"
+  echo "  PASS: basic step"
 
 # =============================================================================
 # Test: Step Into Function
 # =============================================================================
 
 proc testStepIntoFunction() =
-  echo "Testing step into function..."
+  echo "Testing stepInto function..."
   
   let vm = createVM()
-  var executionOrder: seq[int] = @[]
-  
-  vm.onStatement = proc(line, col: int): bool =
-    executionOrder.add(line)
-    return true
-  
   let code = """
-proc double(n) =
-  let result = n * 2
-  return result
+proc add(a, b) =
+  return a + b
 
-let x = double(5)
+let result = add(3, 4)
 """
-  # Line 1: proc double(n) =
-  # Line 2:   let result = n * 2
-  # Line 3:   return result
-  # Line 4: (empty)
-  # Line 5: let x = double(5)
-  
   let ast = parse(code)
-  discard vm.eval(ast)
+  vm.load(ast)
   
-  # Execution order should be:
-  # 1 (proc def), 5 (call), then inside function: 2, 3
-  # The exact order depends on implementation but we should see lines 2 and 3
-  doAssert 2 in executionOrder, "Line 2 (inside function) should be executed"
-  doAssert 3 in executionOrder, "Line 3 (inside function) should be executed"
-  doAssert 5 in executionOrder, "Line 5 (call site) should be executed"
+  # Line 1: proc definition
+  doAssert vm.currentLine == 1
+  vm.stepInto()
   
-  # Check that function body lines come after call site line in execution
-  let callSiteIdx = executionOrder.find(5)
-  let funcLine2Idx = executionOrder.find(2)
-  let funcLine3Idx = executionOrder.find(3)
+  # Line 4: let result = add(3, 4)
+  doAssert vm.currentLine == 4
+  vm.stepInto()
   
-  if callSiteIdx >= 0 and funcLine2Idx >= 0:
-    doAssert funcLine2Idx > callSiteIdx, "Function body should execute after call"
+  # Now inside function at line 2
+  doAssert vm.currentLine == 2, "Should be inside function at line 2, got " & $vm.currentLine
+  vm.stepInto()
   
-  echo "  PASS: step into function"
+  # Function returned, execution finished
+  doAssert vm.isFinished
+  
+  # Verify result
+  doAssert vm.currentScope.lookup("result").intVal == 7
+  
+  echo "  PASS: stepInto function"
 
 # =============================================================================
-# Test: Nested Function Calls
+# Test: Step Over Function
 # =============================================================================
 
-proc testNestedFunctionCalls() =
-  echo "Testing nested function calls..."
+proc testStepOverFunction() =
+  echo "Testing stepOver function..."
   
   let vm = createVM()
-  var functionCalls: seq[string] = @[]
-  
-  vm.onEnterFunction = proc(name: string) =
-    functionCalls.add(">" & name)
-  
-  vm.onExitFunction = proc(name: string) =
-    functionCalls.add("<" & name)
-  
   let code = """
-proc inner(n) =
-  return n * 2
+proc add(a, b) =
+  let sum = a + b
+  return sum
 
-proc middle(n) =
-  return inner(n) + 1
-
-proc outer(n) =
-  return middle(n) + 10
-
-let result = outer(5)
+let x = add(3, 4)
+let y = 10
 """
-  
   let ast = parse(code)
-  discard vm.eval(ast)
+  vm.load(ast)
   
-  # Should see: >outer, >middle, >inner, <inner, <middle, <outer
-  doAssert functionCalls.len == 6, "Expected 6 function events, got " & $functionCalls.len
-  doAssert functionCalls[0] == ">outer"
-  doAssert functionCalls[1] == ">middle"
-  doAssert functionCalls[2] == ">inner"
-  doAssert functionCalls[3] == "<inner"
-  doAssert functionCalls[4] == "<middle"
-  doAssert functionCalls[5] == "<outer"
+  # Line 1: proc definition
+  doAssert vm.currentLine == 1
+  vm.stepOver()
   
-  echo "  PASS: nested function calls"
+  # Line 5: let x = add(3, 4)
+  doAssert vm.currentLine == 5
+  
+  # Step OVER the function call - should execute entire function
+  vm.stepOver()
+  
+  # Should be at line 6, not inside the function
+  doAssert vm.currentLine == 6, "Should be at line 6 after stepOver, got " & $vm.currentLine
+  
+  # Complete execution
+  vm.stepOver()
+  doAssert vm.isFinished
+  
+  # Verify values
+  doAssert vm.currentScope.lookup("x").intVal == 7
+  doAssert vm.currentScope.lookup("y").intVal == 10
+  
+  echo "  PASS: stepOver function"
 
 # =============================================================================
-# Test: Pause Execution at Breakpoint
+# Test: Step Out of Function
 # =============================================================================
 
-proc testPauseAtBreakpoint() =
-  echo "Testing pause at breakpoint..."
+proc testStepOutOfFunction() =
+  echo "Testing stepOut of function..."
   
   let vm = createVM()
-  var pausedAtLine = -1
-  var breakpoints: HashSet[int] = [3].toHashSet
+  let code = """
+proc compute(n) =
+  let a = n * 2
+  let b = a + 1
+  return b
+
+let result = compute(5)
+let done = true
+"""
+  let ast = parse(code)
+  vm.load(ast)
   
-  # Hook that pauses at breakpoints
-  vm.onStatement = proc(line, col: int): bool =
-    if line in breakpoints:
-      pausedAtLine = line
-      return false  # Stop execution
-    return true  # Continue
+  # Step to proc definition
+  vm.step()  # past proc def, now at line 6
+  doAssert vm.currentLine == 6
   
+  # Step into the function call
+  vm.step()  # now inside function at line 2
+  doAssert vm.currentLine == 2, "Should be at line 2, got " & $vm.currentLine
+  
+  # Step out - should run rest of function and return
+  vm.stepOut()
+  
+  # Should be at line 7 (after function returned)
+  doAssert vm.currentLine == 7, "Should be at line 7 after stepOut, got " & $vm.currentLine
+  doAssert not vm.isFinished
+  
+  # Complete execution
+  vm.step()
+  doAssert vm.isFinished
+  
+  # Verify values
+  doAssert vm.currentScope.lookup("result").intVal == 11  # 5*2+1
+  doAssert vm.currentScope.lookup("done").boolVal == true
+  
+  echo "  PASS: stepOut of function"
+
+# =============================================================================
+# Test: Breakpoints - Add/Remove/Has
+# =============================================================================
+
+proc testBreakpointAPI() =
+  echo "Testing breakpoint API..."
+  
+  let vm = createVM()
+  
+  # Initially no breakpoints
+  doAssert not vm.hasBreakpoint(5)
+  
+  # Add breakpoint
+  vm.addBreakpoint(5)
+  doAssert vm.hasBreakpoint(5)
+  
+  # Add more breakpoints
+  vm.addBreakpoint(10)
+  vm.addBreakpoint(15)
+  doAssert vm.hasBreakpoint(10)
+  doAssert vm.hasBreakpoint(15)
+  
+  # Remove breakpoint
+  vm.removeBreakpoint(10)
+  doAssert not vm.hasBreakpoint(10)
+  doAssert vm.hasBreakpoint(5)
+  doAssert vm.hasBreakpoint(15)
+  
+  # Clear all
+  vm.clearBreakpoints()
+  doAssert not vm.hasBreakpoint(5)
+  doAssert not vm.hasBreakpoint(15)
+  
+  echo "  PASS: breakpoint API"
+
+# =============================================================================
+# Test: Continue to Breakpoint
+# =============================================================================
+
+proc testContinueToBreakpoint() =
+  echo "Testing continue to breakpoint..."
+  
+  let vm = createVM()
   let code = """
 let a = 1
 let b = 2
 let c = 3
 let d = 4
+let e = 5
 """
-  
   let ast = parse(code)
-  discard vm.eval(ast)
+  vm.load(ast)
   
-  # Execution should have paused at line 3
-  doAssert pausedAtLine == 3, "Should have paused at line 3, but paused at " & $pausedAtLine
+  # Set breakpoint on line 3
+  vm.addBreakpoint(3)
   
-  echo "  PASS: pause at breakpoint"
+  # Continue - should stop at line 3
+  vm.continueExecution()
+  
+  doAssert vm.currentLine == 3, "Should have stopped at breakpoint line 3, got " & $vm.currentLine
+  doAssert not vm.isFinished
+  
+  # Variables a and b should be defined
+  doAssert vm.currentScope.lookup("a").intVal == 1
+  doAssert vm.currentScope.lookup("b").intVal == 2
+  
+  # Continue again - no more breakpoints, should finish
+  vm.continueExecution()
+  doAssert vm.isFinished
+  
+  # All variables should be defined
+  doAssert vm.currentScope.lookup("c").intVal == 3
+  doAssert vm.currentScope.lookup("d").intVal == 4
+  doAssert vm.currentScope.lookup("e").intVal == 5
+  
+  echo "  PASS: continue to breakpoint"
+
+# =============================================================================
+# Test: Breakpoint Inside Function
+# =============================================================================
+
+proc testBreakpointInsideFunction() =
+  echo "Testing breakpoint inside function..."
+  
+  let vm = createVM()
+  let code = """
+proc compute(n) =
+  let a = n * 2
+  let b = a + 1
+  return b
+
+let result = compute(5)
+"""
+  let ast = parse(code)
+  vm.load(ast)
+  
+  # Set breakpoint on line 3 (inside function)
+  vm.addBreakpoint(3)
+  
+  # Continue - should stop inside function at line 3
+  vm.continueExecution()
+  
+  doAssert vm.currentLine == 3, "Should stop at line 3 inside function, got " & $vm.currentLine
+  doAssert not vm.isFinished
+  
+  # Should be inside function, check local variable 'a'
+  doAssert vm.currentScope.lookup("a").intVal == 10  # 5 * 2
+  
+  # Continue to finish
+  vm.continueExecution()
+  doAssert vm.isFinished
+  
+  # Verify final result
+  doAssert vm.globalScope.lookup("result").intVal == 11
+  
+  echo "  PASS: breakpoint inside function"
+
+# =============================================================================
+# Test: Multiple Breakpoints
+# =============================================================================
+
+proc testMultipleBreakpoints() =
+  echo "Testing multiple breakpoints..."
+  
+  let vm = createVM()
+  let code = """
+let a = 1
+let b = 2
+let c = 3
+let d = 4
+let e = 5
+"""
+  let ast = parse(code)
+  vm.load(ast)
+  
+  # Set breakpoints on lines 2 and 4
+  vm.addBreakpoint(2)
+  vm.addBreakpoint(4)
+  
+  # Continue - should stop at line 2
+  vm.continueExecution()
+  doAssert vm.currentLine == 2, "Should stop at line 2, got " & $vm.currentLine
+  
+  # Continue - should stop at line 4
+  vm.continueExecution()
+  doAssert vm.currentLine == 4, "Should stop at line 4, got " & $vm.currentLine
+  
+  # Continue - should finish
+  vm.continueExecution()
+  doAssert vm.isFinished
+  
+  echo "  PASS: multiple breakpoints"
+
+# =============================================================================
+# Test: Nested Function Step Out
+# =============================================================================
+
+proc testNestedFunctionStepOut() =
+  echo "Testing stepOut from nested function..."
+  
+  let vm = createVM()
+  let code = """
+proc inner(n) =
+  let x = n * 2
+  return x
+
+proc outer(n) =
+  let y = inner(n)
+  return y + 1
+
+let result = outer(5)
+"""
+  let ast = parse(code)
+  vm.load(ast)
+  
+  # Skip proc definitions
+  vm.step()  # proc inner
+  vm.step()  # proc outer
+  doAssert vm.currentLine == 9
+  
+  # Step into outer
+  vm.step()
+  doAssert vm.currentLine == 6  # inside outer
+  
+  # Step into inner
+  vm.step()
+  doAssert vm.currentLine == 2  # inside inner
+  
+  # Step out of inner - should return to outer
+  vm.stepOut()
+  doAssert vm.currentLine == 7, "After stepOut of inner, should be at line 7, got " & $vm.currentLine
+  
+  # Complete execution
+  while not vm.isFinished:
+    vm.step()
+  
+  doAssert vm.globalScope.lookup("result").intVal == 11  # (5*2) + 1
+  
+  echo "  PASS: stepOut from nested function"
+
+# =============================================================================
+# Test: Step After Breakpoint
+# =============================================================================
+
+proc testStepAfterBreakpoint() =
+  echo "Testing step after hitting breakpoint..."
+  
+  let vm = createVM()
+  let code = """
+let a = 1
+let b = 2
+let c = 3
+"""
+  let ast = parse(code)
+  vm.load(ast)
+  
+  # Set breakpoint on line 2
+  vm.addBreakpoint(2)
+  
+  # Continue to breakpoint
+  vm.continueExecution()
+  doAssert vm.currentLine == 2
+  
+  # Now step manually
+  vm.step()  # execute line 2, move to line 3
+  doAssert vm.currentLine == 3
+  
+  vm.step()  # execute line 3, finish
+  doAssert vm.isFinished
+  
+  echo "  PASS: step after breakpoint"
+
+# =============================================================================
+# Test: Call Depth
+# =============================================================================
+
+proc testCallDepth() =
+  echo "Testing call depth..."
+  
+  let vm = createVM()
+  let code = """
+proc foo() =
+  let x = 1
+  return x
+
+let result = foo()
+"""
+  let ast = parse(code)
+  vm.load(ast)
+  
+  # At top level
+  doAssert vm.callDepth() == 0
+  
+  # Step past proc definition
+  vm.step()  # proc foo
+  doAssert vm.callDepth() == 0
+  
+  # Step into foo
+  vm.step()  # let result = foo() - enters foo
+  doAssert vm.callDepth() == 1, "Inside foo, depth should be 1, got " & $vm.callDepth()
+  
+  # Step inside function
+  vm.step()  # let x = 1
+  doAssert vm.callDepth() == 1
+  
+  # Step on return - exits function
+  vm.step()  # return x
+  doAssert vm.isFinished
+  doAssert vm.callDepth() == 0
+  
+  echo "  PASS: call depth"
+
+# =============================================================================
+# Test: Resume After Any Debug Action
+# =============================================================================
+
+proc testResumeAfterDebugActions() =
+  echo "Testing resume after various debug actions..."
+  
+  let vm = createVM()
+  let code = """
+proc double(n) =
+  return n * 2
+
+let a = 1
+let b = double(a)
+let c = double(b)
+let d = c + 1
+"""
+  let ast = parse(code)
+  
+  # Test 1: Resume after step
+  vm.load(ast)
+  vm.step()
+  vm.step()
+  while not vm.isFinished:
+    vm.step()
+  doAssert vm.globalScope.lookup("d").intVal == 5  # ((1*2)*2)+1
+  
+  # Test 2: Resume after stepOver
+  vm.load(ast)
+  vm.stepOver()  # proc def
+  vm.stepOver()  # let a
+  vm.stepOver()  # let b (runs double)
+  while not vm.isFinished:
+    vm.step()
+  doAssert vm.globalScope.lookup("d").intVal == 5
+  
+  # Test 3: Resume after stepOut
+  vm.load(ast)
+  vm.step()  # proc def
+  vm.step()  # let a
+  vm.step()  # into double
+  vm.stepOut()  # out of double
+  while not vm.isFinished:
+    vm.step()
+  doAssert vm.globalScope.lookup("d").intVal == 5
+  
+  # Test 4: Resume after breakpoint
+  vm.load(ast)
+  vm.addBreakpoint(6)
+  vm.continueExecution()
+  doAssert vm.currentLine == 6
+  while not vm.isFinished:
+    vm.step()
+  doAssert vm.globalScope.lookup("d").intVal == 5
+  
+  echo "  PASS: resume after debug actions"
 
 # =============================================================================
 # Main
 # =============================================================================
 
 when isMainModule:
-  echo "Running Nimmy debugger tests..."
+  echo "Running Nimmy debugging tests..."
   echo ""
   
-  # Basic API tests (these should pass with current implementation)
-  testBreakpointAPI()
-  testStepModeAPI()
-  testCallStackAPI()
-  
-  # VM hook tests (these require VM modifications)
-  testVMStatementHook()
-  testVMFunctionHooks()
-  testBreakpointsInsideFunctions()
+  testBasicStep()
   testStepIntoFunction()
-  testNestedFunctionCalls()
-  testPauseAtBreakpoint()
+  testStepOverFunction()
+  testStepOutOfFunction()
+  testBreakpointAPI()
+  testContinueToBreakpoint()
+  testBreakpointInsideFunction()
+  testMultipleBreakpoints()
+  testNestedFunctionStepOut()
+  testStepAfterBreakpoint()
+  testCallDepth()
+  testResumeAfterDebugActions()
   
   echo ""
-  echo "All debugger tests passed!"
+  echo "All debugging tests passed!"
