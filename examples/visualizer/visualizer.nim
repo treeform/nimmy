@@ -95,9 +95,6 @@ type
     finished: bool
     outputLines: seq[string]
     callStack: seq[string]
-    stmtIndex: int
-    stmts: seq[Node]
-    # New fields for advanced debugging
     breakpoints: HashSet[int]   ## Line numbers with breakpoints
     stepMode: StepMode
     callDepth: int              ## Current call stack depth
@@ -118,8 +115,6 @@ proc initDebugger(scriptPath: string) =
     finished: false,
     outputLines: @[],
     callStack: @["<main>"],
-    stmtIndex: 0,
-    stmts: @[],
     breakpoints: oldBreakpoints,
     stepMode: smPaused,
     callDepth: 1,
@@ -169,12 +164,52 @@ proc initDebugger(scriptPath: string) =
       raise newException(RuntimeError, "Cannot pop from empty array")
     args[0].arrayVal.pop()
 
-  # Collect top-level statements
-  if debugState.ast.kind == nkProgram:
-    debugState.stmts = debugState.ast.stmts
-
-  if debugState.stmts.len > 0:
-    debugState.currentLine = debugState.stmts[0].line
+  # Set up VM hooks for debugging
+  debugState.vm.onStatement = proc(line, col: int): bool =
+    debugState.currentLine = line
+    
+    # Capture any new output
+    if debugState.vm.output.len > debugState.outputLines.len:
+      for i in debugState.outputLines.len ..< debugState.vm.output.len:
+        debugState.outputLines.add(debugState.vm.output[i])
+    
+    case debugState.stepMode
+    of smPaused:
+      # Already paused, don't continue
+      return false
+    of smStep:
+      # Single step - pause after this statement
+      debugState.stepMode = smPaused
+      return false
+    of smStepInto:
+      # Step into - pause at every statement
+      debugState.stepMode = smPaused
+      return false
+    of smStepOut:
+      # Step out - continue until call depth decreases
+      if debugState.callDepth <= debugState.targetCallDepth:
+        debugState.stepMode = smPaused
+        return false
+      return true  # Keep running
+    of smContinue:
+      # Check for breakpoint
+      if line in debugState.breakpoints:
+        debugState.stepMode = smPaused
+        return false
+      return true  # Keep running
+  
+  debugState.vm.onEnterFunction = proc(name: string) =
+    debugState.callStack.add(name)
+    debugState.callDepth = debugState.callStack.len
+  
+  debugState.vm.onExitFunction = proc(name: string) =
+    if debugState.callStack.len > 1:
+      discard debugState.callStack.pop()
+    debugState.callDepth = debugState.callStack.len
+  
+  # Get first line from AST
+  if debugState.ast.kind == nkProgram and debugState.ast.stmts.len > 0:
+    debugState.currentLine = debugState.ast.stmts[0].line
     debugState.running = true
 
 proc toggleBreakpoint(line: int) =
@@ -185,74 +220,56 @@ proc toggleBreakpoint(line: int) =
   else:
     debugState.breakpoints.incl(line)
 
-proc executeOneStatement(): bool =
-  ## Execute one statement. Returns true if execution should continue.
-  if debugState == nil or debugState.finished or debugState.stmtIndex >= debugState.stmts.len:
-    if debugState != nil:
-      debugState.finished = true
-    return false
-
+proc runExecution() =
+  ## Run the VM until it pauses or finishes
+  if debugState == nil or debugState.finished:
+    return
+  
   try:
-    let stmt = debugState.stmts[debugState.stmtIndex]
-    discard debugState.vm.eval(stmt)
-
-    # Capture output
+    discard debugState.vm.eval(debugState.ast)
+    
+    # Capture final output
     if debugState.vm.output.len > debugState.outputLines.len:
       for i in debugState.outputLines.len ..< debugState.vm.output.len:
         debugState.outputLines.add(debugState.vm.output[i])
-
-    debugState.stmtIndex += 1
-
-    if debugState.stmtIndex < debugState.stmts.len:
-      debugState.currentLine = debugState.stmts[debugState.stmtIndex].line
-      return true
-    else:
+    
+    # Check if we truly finished or just paused
+    if debugState.stepMode != smPaused:
       debugState.finished = true
-      return false
-
   except NimmyError as e:
     debugState.outputLines.add("Error: " & e.msg)
     debugState.finished = true
-    return false
 
 proc stepDebugger() =
   ## Single step - execute one statement
+  if debugState == nil or debugState.finished:
+    return
   debugState.stepMode = smStep
-  discard executeOneStatement()
-  debugState.stepMode = smPaused
+  runExecution()
 
 proc stepIntoDebugger() =
-  ## Step into - for now same as step (would need VM hooks for full implementation)
+  ## Step into - same as step but will stop inside functions
+  if debugState == nil or debugState.finished:
+    return
   debugState.stepMode = smStepInto
-  discard executeOneStatement()
-  debugState.stepMode = smPaused
+  runExecution()
 
 proc stepOutDebugger() =
-  ## Step out - run until call depth decreases (simplified: run until end of current block)
+  ## Step out - run until we exit the current function
+  if debugState == nil or debugState.finished:
+    return
   debugState.stepMode = smStepOut
   debugState.targetCallDepth = debugState.callDepth - 1
-  # For simplified implementation, just run one statement
-  discard executeOneStatement()
-  debugState.stepMode = smPaused
+  if debugState.targetCallDepth < 1:
+    debugState.targetCallDepth = 1
+  runExecution()
 
 proc continueDebugger() =
   ## Continue execution until breakpoint or end
   if debugState == nil or debugState.finished:
     return
-
   debugState.stepMode = smContinue
-
-  # Execute until we hit a breakpoint or finish
-  while not debugState.finished:
-    if not executeOneStatement():
-      break
-
-    # Check if we hit a breakpoint
-    if debugState.currentLine in debugState.breakpoints:
-      debugState.stepMode = smPaused
-      return
-
-  debugState.stepMode = smPaused
+  runExecution()
 
 # =============================================================================
 # Panel Constants

@@ -8,9 +8,9 @@ empty arr: []
 empty arr len: 0
 empty set: {}
 empty set card: 0
-empty proc returns: 1
+empty proc returns: nil
 --- Function Edge Cases ---
-no return value: 10
+no return value: nil
 deep return 15: very big
 deep return 7: big
 deep return 3: small
