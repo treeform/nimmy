@@ -1,6 +1,6 @@
 ## Main entry point and API for the Nimmy scripting language.
 import
-  std/[tables, strutils, strformat],
+  std/[tables, strutils, strformat, math],
   nimmy_types,
   nimmy_parser,
   nimmy_vm,
@@ -229,6 +229,149 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "Second argument to del() must be a string")
     args[0].tableVal.del(args[1].strVal)
     args[0]
+  
+  # Math constants
+  vm.currentScope.define("PI", floatValue(PI), isConst = true)
+  vm.currentScope.define("E", floatValue(E), isConst = true)
+  vm.currentScope.define("TAU", floatValue(TAU), isConst = true)
+  
+  # sin(x) - sine
+  vm.addProc("sin") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "sin() takes exactly 1 argument")
+    floatValue(sin(toFloat(args[0])))
+  
+  # cos(x) - cosine
+  vm.addProc("cos") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "cos() takes exactly 1 argument")
+    floatValue(cos(toFloat(args[0])))
+  
+  # tan(x) - tangent
+  vm.addProc("tan") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "tan() takes exactly 1 argument")
+    floatValue(tan(toFloat(args[0])))
+  
+  # asin(x) - arc sine
+  vm.addProc("asin") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "asin() takes exactly 1 argument")
+    floatValue(arcsin(toFloat(args[0])))
+  
+  # acos(x) - arc cosine
+  vm.addProc("acos") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "acos() takes exactly 1 argument")
+    floatValue(arccos(toFloat(args[0])))
+  
+  # atan(x) - arc tangent
+  vm.addProc("atan") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "atan() takes exactly 1 argument")
+    floatValue(arctan(toFloat(args[0])))
+  
+  # atan2(y, x) - arc tangent of y/x
+  vm.addProc("atan2") do (args: seq[Value]) -> Value:
+    if args.len != 2:
+      raise newException(RuntimeError, "atan2() takes exactly 2 arguments")
+    floatValue(arctan2(toFloat(args[0]), toFloat(args[1])))
+  
+  # sinh(x) - hyperbolic sine
+  vm.addProc("sinh") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "sinh() takes exactly 1 argument")
+    floatValue(sinh(toFloat(args[0])))
+  
+  # cosh(x) - hyperbolic cosine
+  vm.addProc("cosh") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "cosh() takes exactly 1 argument")
+    floatValue(cosh(toFloat(args[0])))
+  
+  # tanh(x) - hyperbolic tangent
+  vm.addProc("tanh") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "tanh() takes exactly 1 argument")
+    floatValue(tanh(toFloat(args[0])))
+  
+  # sqrt(x) - square root
+  vm.addProc("sqrt") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "sqrt() takes exactly 1 argument")
+    floatValue(sqrt(toFloat(args[0])))
+  
+  # pow(base, exp) - power
+  vm.addProc("pow") do (args: seq[Value]) -> Value:
+    if args.len != 2:
+      raise newException(RuntimeError, "pow() takes exactly 2 arguments")
+    floatValue(pow(toFloat(args[0]), toFloat(args[1])))
+  
+  # exp(x) - e^x
+  vm.addProc("exp") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "exp() takes exactly 1 argument")
+    floatValue(exp(toFloat(args[0])))
+  
+  # ln(x) - natural logarithm
+  vm.addProc("ln") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "ln() takes exactly 1 argument")
+    floatValue(ln(toFloat(args[0])))
+  
+  # log10(x) - base-10 logarithm
+  vm.addProc("log10") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "log10() takes exactly 1 argument")
+    floatValue(log10(toFloat(args[0])))
+  
+  # log2(x) - base-2 logarithm
+  vm.addProc("log2") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "log2() takes exactly 1 argument")
+    floatValue(log2(toFloat(args[0])))
+  
+  # floor(x) - round down
+  vm.addProc("floor") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "floor() takes exactly 1 argument")
+    floatValue(floor(toFloat(args[0])))
+  
+  # ceil(x) - round up
+  vm.addProc("ceil") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "ceil() takes exactly 1 argument")
+    floatValue(ceil(toFloat(args[0])))
+  
+  # round(x) - round to nearest
+  vm.addProc("round") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "round() takes exactly 1 argument")
+    floatValue(round(toFloat(args[0])))
+  
+  # trunc(x) - truncate towards zero
+  vm.addProc("trunc") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "trunc() takes exactly 1 argument")
+    floatValue(trunc(toFloat(args[0])))
+  
+  # degToRad(x) - convert degrees to radians
+  vm.addProc("degToRad") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "degToRad() takes exactly 1 argument")
+    floatValue(degToRad(toFloat(args[0])))
+  
+  # radToDeg(x) - convert radians to degrees
+  vm.addProc("radToDeg") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "radToDeg() takes exactly 1 argument")
+    floatValue(radToDeg(toFloat(args[0])))
+  
+  # hypot(x, y) - hypotenuse (sqrt(x^2 + y^2))
+  vm.addProc("hypot") do (args: seq[Value]) -> Value:
+    if args.len != 2:
+      raise newException(RuntimeError, "hypot() takes exactly 2 arguments")
+    floatValue(hypot(toFloat(args[0]), toFloat(args[1])))
 
 # Run a script and return the output
 proc run*(nvm: NimmyVM, source: string): string =

@@ -1,0 +1,76 @@
+# Test math functions and constants
+
+# Constants
+echo "PI = " & $PI
+echo "E = " & $E
+echo "TAU = " & $TAU
+
+# Basic trig functions (using known values)
+echo "sin(0) = " & $sin(0)
+echo "cos(0) = " & $cos(0)
+echo "tan(0) = " & $tan(0)
+
+# sin(PI/2) should be 1
+let sinPiHalf = sin(PI / 2)
+echo "sin(PI/2) ≈ 1: " & $(sinPiHalf > 0.999)
+
+# cos(PI) should be -1
+let cosPi = cos(PI)
+echo "cos(PI) ≈ -1: " & $(cosPi < -0.999)
+
+# Inverse trig functions
+echo "asin(0) = " & $asin(0)
+echo "acos(1) = " & $acos(1)
+echo "atan(0) = " & $atan(0)
+
+# atan2
+echo "atan2(1, 1) = " & $atan2(1, 1)
+
+# Hyperbolic functions
+echo "sinh(0) = " & $sinh(0)
+echo "cosh(0) = " & $cosh(0)
+echo "tanh(0) = " & $tanh(0)
+
+# Square root
+echo "sqrt(4) = " & $sqrt(4)
+echo "sqrt(9) = " & $sqrt(9)
+echo "sqrt(2) ≈ 1.414: " & $(sqrt(2) > 1.41 and sqrt(2) < 1.42)
+
+# Power
+echo "pow(2, 3) = " & $pow(2, 3)
+echo "pow(2, 10) = " & $pow(2, 10)
+echo "pow(10, 0) = " & $pow(10, 0)
+
+# Exponential and logarithms
+echo "exp(0) = " & $exp(0)
+echo "exp(1) ≈ E: " & $(exp(1) > 2.71 and exp(1) < 2.72)
+
+echo "ln(1) = " & $ln(1)
+echo "ln(E) ≈ 1: " & $(ln(E) > 0.999 and ln(E) < 1.001)
+
+echo "log10(10) = " & $log10(10)
+echo "log10(100) = " & $log10(100)
+
+echo "log2(2) = " & $log2(2)
+echo "log2(8) = " & $log2(8)
+
+# Rounding functions
+echo "floor(3.7) = " & $floor(3.7)
+echo "floor(-3.7) = " & $floor(-3.7)
+
+echo "ceil(3.2) = " & $ceil(3.2)
+echo "ceil(-3.2) = " & $ceil(-3.2)
+
+echo "round(3.5) = " & $round(3.5)
+echo "round(3.4) = " & $round(3.4)
+
+echo "trunc(3.7) = " & $trunc(3.7)
+echo "trunc(-3.7) = " & $trunc(-3.7)
+
+# Degree/Radian conversion
+echo "degToRad(180) ≈ PI: " & $(degToRad(180) > 3.14 and degToRad(180) < 3.15)
+echo "radToDeg(PI) ≈ 180: " & $(radToDeg(PI) > 179.9 and radToDeg(PI) < 180.1)
+
+# Hypotenuse
+echo "hypot(3, 4) = " & $hypot(3, 4)
+echo "hypot(5, 12) = " & $hypot(5, 12)

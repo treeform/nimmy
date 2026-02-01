@@ -1,0 +1,41 @@
+PI = 3.141592653589793
+E = 2.718281828459045
+TAU = 6.283185307179586
+sin(0) = 0.0
+cos(0) = 1.0
+tan(0) = 0.0
+sin(PI/2) ≈ 1: true
+cos(PI) ≈ -1: true
+asin(0) = 0.0
+acos(1) = 0.0
+atan(0) = 0.0
+atan2(1, 1) = 0.7853981633974483
+sinh(0) = 0.0
+cosh(0) = 1.0
+tanh(0) = 0.0
+sqrt(4) = 2.0
+sqrt(9) = 3.0
+sqrt(2) ≈ 1.414: true
+pow(2, 3) = 8.0
+pow(2, 10) = 1024.0
+pow(10, 0) = 1.0
+exp(0) = 1.0
+exp(1) ≈ E: true
+ln(1) = 0.0
+ln(E) ≈ 1: true
+log10(10) = 1.0
+log10(100) = 2.0
+log2(2) = 1.0
+log2(8) = 3.0
+floor(3.7) = 3.0
+floor(-3.7) = -4.0
+ceil(3.2) = 4.0
+ceil(-3.2) = -3.0
+round(3.5) = 4.0
+round(3.4) = 3.0
+trunc(3.7) = 3.0
+trunc(-3.7) = -3.0
+degToRad(180) ≈ PI: true
+radToDeg(PI) ≈ 180: true
+hypot(3, 4) = 5.0
+hypot(5, 12) = 13.0
