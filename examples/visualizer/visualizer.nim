@@ -2,9 +2,9 @@
 ## A graphical step-by-step debugger using Silky UI.
 
 import
-  std/[os, strformat, strutils, tables],
+  std/[os, strformat, strutils, tables, sets, hashes],
   opengl, windy, bumpy, vmath, chroma,
-  silky,
+  silky, silky/widgets,
   ../../src/nimmy/[types, parser, vm, utils]
 
 # =============================================================================
@@ -49,6 +49,7 @@ type
     pkStackTrace
     pkOutput
     pkVariables
+    pkControls
 
   Area = ref object
     layout: AreaLayout
@@ -76,6 +77,13 @@ type
 # =============================================================================
 
 type
+  StepMode = enum
+    smPaused       ## Waiting for user input
+    smStep         ## Execute one statement then pause
+    smStepInto     ## Step into function calls
+    smStepOut      ## Run until we exit current call depth
+    smContinue     ## Run until breakpoint or end
+
   DebuggerState = ref object
     scriptPath: string
     source: string
@@ -89,10 +97,20 @@ type
     callStack: seq[string]
     stmtIndex: int
     stmts: seq[Node]
+    # New fields for advanced debugging
+    breakpoints: HashSet[int]   ## Line numbers with breakpoints
+    stepMode: StepMode
+    callDepth: int              ## Current call stack depth
+    targetCallDepth: int        ## For step out - target depth to stop at
 
 var debugState: DebuggerState
 
 proc initDebugger(scriptPath: string) =
+  # Preserve breakpoints across restarts
+  var oldBreakpoints: HashSet[int]
+  if debugState != nil:
+    oldBreakpoints = debugState.breakpoints
+
   debugState = DebuggerState(
     scriptPath: scriptPath,
     currentLine: 0,
@@ -101,7 +119,11 @@ proc initDebugger(scriptPath: string) =
     outputLines: @[],
     callStack: @["<main>"],
     stmtIndex: 0,
-    stmts: @[]
+    stmts: @[],
+    breakpoints: oldBreakpoints,
+    stepMode: smPaused,
+    callDepth: 1,
+    targetCallDepth: 0
   )
 
   if not fileExists(scriptPath):
@@ -155,11 +177,20 @@ proc initDebugger(scriptPath: string) =
     debugState.currentLine = debugState.stmts[0].line
     debugState.running = true
 
-proc stepDebugger() =
+proc toggleBreakpoint(line: int) =
+  if debugState == nil:
+    return
+  if line in debugState.breakpoints:
+    debugState.breakpoints.excl(line)
+  else:
+    debugState.breakpoints.incl(line)
+
+proc executeOneStatement(): bool =
+  ## Execute one statement. Returns true if execution should continue.
   if debugState == nil or debugState.finished or debugState.stmtIndex >= debugState.stmts.len:
     if debugState != nil:
       debugState.finished = true
-    return
+    return false
 
   try:
     let stmt = debugState.stmts[debugState.stmtIndex]
@@ -174,12 +205,54 @@ proc stepDebugger() =
 
     if debugState.stmtIndex < debugState.stmts.len:
       debugState.currentLine = debugState.stmts[debugState.stmtIndex].line
+      return true
     else:
       debugState.finished = true
+      return false
 
   except NimmyError as e:
     debugState.outputLines.add("Error: " & e.msg)
     debugState.finished = true
+    return false
+
+proc stepDebugger() =
+  ## Single step - execute one statement
+  debugState.stepMode = smStep
+  discard executeOneStatement()
+  debugState.stepMode = smPaused
+
+proc stepIntoDebugger() =
+  ## Step into - for now same as step (would need VM hooks for full implementation)
+  debugState.stepMode = smStepInto
+  discard executeOneStatement()
+  debugState.stepMode = smPaused
+
+proc stepOutDebugger() =
+  ## Step out - run until call depth decreases (simplified: run until end of current block)
+  debugState.stepMode = smStepOut
+  debugState.targetCallDepth = debugState.callDepth - 1
+  # For simplified implementation, just run one statement
+  discard executeOneStatement()
+  debugState.stepMode = smPaused
+
+proc continueDebugger() =
+  ## Continue execution until breakpoint or end
+  if debugState == nil or debugState.finished:
+    return
+
+  debugState.stepMode = smContinue
+
+  # Execute until we hit a breakpoint or finish
+  while not debugState.finished:
+    if not executeOneStatement():
+      break
+
+    # Check if we hit a breakpoint
+    if debugState.currentLine in debugState.breakpoints:
+      debugState.stepMode = smPaused
+      return
+
+  debugState.stepMode = smPaused
 
 # =============================================================================
 # Panel Constants
@@ -189,13 +262,19 @@ const
   AreaHeaderHeight = 32.0
   AreaMargin = 6.0
   LineHeight = 18.0'f32
+  LineNumberWidth = 50.0'f32
   BackgroundColor = parseHtmlColor("#1e1e2e").rgbx
   CurrentLineColor = parseHtmlColor("#44475a").rgbx
+  BreakpointColor = parseHtmlColor("#ff5555").rgbx
+  BreakpointLineColor = parseHtmlColor("#442222").rgbx
   LineNumberColor = parseHtmlColor("#6272a4").rgbx
   CodeColor = parseHtmlColor("#f8f8f2").rgbx
   HeaderTextColor = rgbx(200, 200, 200, 255)
   DimTextColor = rgbx(128, 128, 128, 255)
   SuccessColor = rgbx(100, 200, 100, 255)
+  ButtonColor = parseHtmlColor("#44475a").rgbx
+  ButtonHoverColor = parseHtmlColor("#6272a4").rgbx
+  ButtonActiveColor = parseHtmlColor("#50fa7b").rgbx
 
 # =============================================================================
 # Panel System Globals
@@ -434,22 +513,171 @@ proc drawSourceCodeContent() =
     text "(no script loaded)"
     return
 
+  let contentWidth = sk.size.x - 16
+
   for i, line in debugState.sourceLines:
     let lineNum = i + 1
     let isCurrentLine = lineNum == debugState.currentLine and not debugState.finished
+    let hasBreakpoint = lineNum in debugState.breakpoints
 
-    # Draw line highlight for current line
+    # The current position (sk.at) is already scroll-adjusted by the frame
+    let lineY = sk.at.y
+    let lineX = sk.at.x
+
+    # Define clickable area for breakpoint toggle (line number gutter)
+    let gutterRect = rect(lineX, lineY, LineNumberWidth, LineHeight)
+
+    # Handle breakpoint click - mouseInsideClip accounts for scroll & clipping
+    if mouseInsideClip(gutterRect) and window.buttonPressed[MouseLeft]:
+      toggleBreakpoint(lineNum)
+
+    # Draw breakpoint line background
+    if hasBreakpoint and not isCurrentLine:
+      sk.drawRect(
+        vec2(lineX, lineY),
+        vec2(contentWidth, LineHeight),
+        BreakpointLineColor
+      )
+
+    # Draw current line highlight (on top of breakpoint background)
     if isCurrentLine:
       sk.drawRect(
-        vec2(sk.pos.x, sk.at.y - 2),
-        vec2(sk.size.x - 16, LineHeight),
+        vec2(lineX, lineY),
+        vec2(contentWidth, LineHeight),
         CurrentLineColor
       )
 
-    # Draw line number + code
-    let lineNumStr = align($lineNum, 4) & "  " & line
-    discard sk.drawText("Code", lineNumStr, sk.at, if isCurrentLine: CodeColor else: CodeColor)
-    sk.advance(vec2(sk.size.x - 32, LineHeight))
+    # Draw breakpoint indicator (red dot in line number area)
+    if hasBreakpoint:
+      let dotX = lineX + 6
+      let dotY = lineY + (LineHeight - 10) / 2
+      sk.drawRect(vec2(dotX, dotY), vec2(10, 10), BreakpointColor)
+
+    # Draw line number
+    let lineNumStr = align($lineNum, 4)
+    discard sk.drawText("Code", lineNumStr, vec2(lineX + 20, lineY), LineNumberColor)
+
+    # Draw code
+    let codeX = lineX + LineNumberWidth
+    discard sk.drawText("Code", line, vec2(codeX, lineY), CodeColor)
+
+    sk.advance(vec2(contentWidth, LineHeight))
+
+proc drawButton(label: string, x, y, w, h: float32, enabled: bool = true): bool =
+  ## Draw a button and return true if clicked.
+  let btnRect = rect(x, y, w, h)
+  let mousePos = window.mousePos.vec2
+  let isHovered = mousePos.overlaps(btnRect) and enabled
+  let isPressed = isHovered and window.buttonPressed[MouseLeft]
+
+  let bgColor = if not enabled:
+    rgbx(60, 60, 70, 255)
+  elif isHovered:
+    ButtonHoverColor
+  else:
+    ButtonColor
+
+  sk.drawRect(vec2(x, y), vec2(w, h), bgColor)
+
+  let textSize = sk.getTextSize("Default", label)
+  let textX = x + (w - textSize.x) / 2
+  let textY = y + (h - textSize.y) / 2
+
+  let textColor = if enabled: rgbx(255, 255, 255, 255) else: rgbx(100, 100, 100, 255)
+  discard sk.drawText("Default", label, vec2(textX, textY), textColor)
+
+  return isPressed and enabled
+
+proc drawControlsContent() =
+  ## Draw debug controls panel content.
+  if debugState == nil:
+    text "(no script loaded)"
+    return
+
+  let baseX = sk.at.x
+  let baseY = sk.at.y
+  let btnW = 80.0'f32
+  let btnH = 28.0'f32
+  let spacing = 8.0'f32
+  let notFinished = not debugState.finished
+
+  # Row 1: Step controls
+  discard sk.drawText("Default", "Execution:", vec2(baseX, baseY), HeaderTextColor)
+  sk.advance(vec2(100, 24))
+
+  var x = baseX
+  var y = sk.at.y
+
+  # Continue button
+  if drawButton("Continue", x, y, btnW, btnH, notFinished):
+    continueDebugger()
+  x += btnW + spacing
+
+  # Step button
+  if drawButton("Step", x, y, btnW, btnH, notFinished):
+    stepDebugger()
+  x += btnW + spacing
+
+  # Step Into button
+  if drawButton("Step Into", x, y, btnW, btnH, notFinished):
+    stepIntoDebugger()
+  x += btnW + spacing
+
+  # Step Out button
+  if drawButton("Step Out", x, y, btnW, btnH, notFinished):
+    stepOutDebugger()
+
+  sk.advance(vec2(sk.size.x - 32, btnH + spacing))
+
+  # Row 2: Other controls
+  x = baseX
+  y = sk.at.y
+
+  # Restart button
+  if drawButton("Restart", x, y, btnW, btnH):
+    initDebugger(debugState.scriptPath)
+
+  sk.advance(vec2(sk.size.x - 32, btnH + spacing * 2))
+
+  # Status info
+  let statusY = sk.at.y
+  let statusStr = case debugState.stepMode
+    of smPaused: "Paused"
+    of smStep: "Stepping"
+    of smStepInto: "Stepping Into"
+    of smStepOut: "Stepping Out"
+    of smContinue: "Running"
+
+  let statusColor = if debugState.finished:
+    SuccessColor
+  elif debugState.stepMode == smPaused:
+    rgbx(255, 200, 100, 255)
+  else:
+    rgbx(100, 200, 255, 255)
+
+  let displayStatus = if debugState.finished: "Finished" else: statusStr
+  discard sk.drawText("Default", "Status: " & displayStatus, vec2(baseX, statusY), statusColor)
+  sk.advance(vec2(200, 20))
+
+  # Breakpoint info
+  let bpCount = debugState.breakpoints.len
+  let bpText = if bpCount == 0:
+    "No breakpoints set"
+  elif bpCount == 1:
+    "1 breakpoint"
+  else:
+    $bpCount & " breakpoints"
+
+  discard sk.drawText("Default", bpText, vec2(baseX, sk.at.y), DimTextColor)
+  sk.advance(vec2(200, 20))
+
+  # Help text
+  sk.advance(vec2(0, 8))
+  discard sk.drawText("Code", "Click line numbers to toggle breakpoints", vec2(baseX, sk.at.y), DimTextColor)
+  sk.advance(vec2(300, LineHeight))
+
+  discard sk.drawText("Code", "Keyboard: Space/Enter=Step, C=Continue, R=Restart", vec2(baseX, sk.at.y), DimTextColor)
+  sk.advance(vec2(400, LineHeight))
 
 proc drawStackTraceContent() =
   ## Draw stack trace content - call inside a frame template.
@@ -530,6 +758,8 @@ proc drawPanelContent(panel: Panel, contentRect: Rect) =
       drawOutputContent()
     of pkVariables:
       drawVariablesContent()
+    of pkControls:
+      drawControlsContent()
 
 # =============================================================================
 # Panel Drawing
@@ -629,9 +859,9 @@ proc drawAreaRecursive(area: Area, r: Rect) =
 proc initRootArea() =
   rootArea = Area()
 
-  # Main split: Left (code + output) | Right (variables + stack)
+  # Main split: Left (code + output) | Right (controls + variables + stack)
   rootArea.split(Vertical)
-  rootArea.split = 0.70
+  rootArea.split = 0.68
 
   # Left column: Source Code (top 75%) + Output (bottom 25%)
   rootArea.areas[0].split(Horizontal)
@@ -639,11 +869,16 @@ proc initRootArea() =
   rootArea.areas[0].areas[0].addPanel("Source Code", pkSourceCode)
   rootArea.areas[0].areas[1].addPanel("Output", pkOutput)
 
-  # Right column: Variables (top 60%) + Stack Trace (bottom 40%)
+  # Right column: Controls (top) + Variables (middle) + Stack Trace (bottom)
   rootArea.areas[1].split(Horizontal)
-  rootArea.areas[1].split = 0.60
-  rootArea.areas[1].areas[0].addPanel("Variables", pkVariables)
-  rootArea.areas[1].areas[1].addPanel("Stack Trace", pkStackTrace)
+  rootArea.areas[1].split = 0.35
+  rootArea.areas[1].areas[0].addPanel("Controls", pkControls)
+
+  # Variables + Stack below Controls
+  rootArea.areas[1].areas[1].split(Horizontal)
+  rootArea.areas[1].areas[1].split = 0.60
+  rootArea.areas[1].areas[1].areas[0].addPanel("Variables", pkVariables)
+  rootArea.areas[1].areas[1].areas[1].addPanel("Stack Trace", pkStackTrace)
 
 # =============================================================================
 # Main
@@ -673,13 +908,21 @@ proc main() =
     # Reset cursor
     sk.cursor = Cursor(kind: ArrowCursor)
 
-    # Handle keyboard input
+    # Handle keyboard shortcuts
     if window.buttonPressed[KeySpace] or window.buttonPressed[KeyEnter]:
       stepDebugger()
 
-    # Handle R to restart
+    if window.buttonPressed[KeyC]:
+      continueDebugger()
+
     if window.buttonPressed[KeyR]:
       initDebugger(scriptPath)
+
+    if window.buttonPressed[KeyI]:
+      stepIntoDebugger()
+
+    if window.buttonPressed[KeyO]:
+      stepOutDebugger()
 
     # Update Dragging Split
     if dragArea != nil:
@@ -756,7 +999,7 @@ proc main() =
       if debugState.finished:
         "Finished | Press R to restart"
       else:
-        fmt"Line {debugState.currentLine} | Press Space/Enter to step, R to restart"
+        fmt"Line {debugState.currentLine} | Space=Step, C=Continue, R=Restart"
     else:
       "No script loaded"
 
