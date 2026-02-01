@@ -1,0 +1,47 @@
+=== Pathological Tests ===
+--- Long chain ---
+long chain: 42
+--- Self-shadow ---
+innermost x: 4
+level 3 x: 3
+level 2 x: 2
+level 1 x: 1
+--- Proc patterns ---
+chain mult: 30
+--- String concat ---
+sparse concat: ab len=2
+--- Array ops ---
+first 3: [1, 2, 3]
+--- Modify and return ---
+after append: [1, 2]
+base now: [1, 2]
+--- Nested arithmetic ---
+deep math: 3.5
+--- Conditional ---
+ternary true: 1
+ternary false: 2
+--- Accumulator ---
+sum of squares 1-5: 55
+--- Table update ---
+counts a: 3
+counts b: 5
+--- Mixed collections ---
+mixed[0].name: first
+mixed[1].name: second
+--- Callback ---
+mapped: [2, 4, 6]
+--- Filter ---
+evens: [2, 4, 6]
+--- Reduce ---
+sum via reduce: 15
+--- Compose ---
+add then mult 5: 12
+mult then add 5: 11
+--- Mutual recursion ---
+ping pong 10: 10
+--- Object computed ---
+magnitude (3,4): 5.0
+--- Comparisons ---
+all equal chain: true
+ascending chain: true
+=== Pathological Tests Complete ===

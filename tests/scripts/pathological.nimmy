@@ -1,0 +1,239 @@
+# Pathological test cases
+
+echo "=== Pathological Tests ==="
+
+# =====================
+# Very long chain
+# =====================
+echo "--- Long chain ---"
+proc id(x) =
+  return x
+
+let longChain = id(id(id(id(id(id(id(id(id(id(42))))))))))
+echo "long chain: " & $longChain
+
+# =====================
+# Self-shadowing in nested scopes
+# =====================
+echo "--- Self-shadow ---"
+var x = 1
+if true:
+  var x = 2
+  if true:
+    var x = 3
+    if true:
+      var x = 4
+      echo "innermost x: " & $x
+    echo "level 3 x: " & $x
+  echo "level 2 x: " & $x
+echo "level 1 x: " & $x
+
+# =====================
+# Proc that returns itself pattern
+# =====================
+echo "--- Proc patterns ---"
+proc makeMultiplier(n) =
+  proc multiply(x) =
+    return x * n
+  return multiply
+
+let m2 = makeMultiplier(2)
+let m3 = makeMultiplier(3)
+echo "chain mult: " & $m3(m2(5))
+
+# =====================  
+# String with all special concat
+# =====================
+echo "--- String concat ---"
+let s = "" & "" & "a" & "" & "b" & "" & ""
+echo "sparse concat: " & s & " len=" & $s.len
+
+# =====================
+# Array slicing simulation
+# =====================
+echo "--- Array ops ---"
+var arr = [1, 2, 3, 4, 5]
+var first3 = []
+for i in 0 ..< 3:
+  first3.add(arr[i])
+echo "first 3: " & $first3
+
+# =====================
+# Function that modifies and returns
+# =====================
+echo "--- Modify and return ---"
+proc appendAndGet(arr, val) =
+  arr.add(val)
+  return arr
+
+var base = [1]
+echo "after append: " & $appendAndGet(base, 2)
+echo "base now: " & $base
+
+# =====================
+# Deeply nested arithmetic
+# =====================
+echo "--- Nested arithmetic ---"
+let deepMath = ((((1 + 2) * 3) - 4) / 2) + 1
+echo "deep math: " & $deepMath
+
+# =====================
+# Conditional expression-like
+# =====================
+echo "--- Conditional ---"
+proc ternary(cond, a, b) =
+  if cond:
+    return a
+  return b
+
+echo "ternary true: " & $ternary(true, 1, 2)
+echo "ternary false: " & $ternary(false, 1, 2)
+
+# =====================
+# Array as accumulator
+# =====================
+echo "--- Accumulator ---"
+var accum = []
+for i in 1 .. 5:
+  accum.add(i * i)
+  
+var total = 0
+for x in accum:
+  total = total + x
+echo "sum of squares 1-5: " & $total
+
+# =====================
+# Table update pattern
+# =====================
+echo "--- Table update ---"
+var counts = {"a": 0, "b": 0}
+for i in 1 .. 3:
+  counts["a"] = counts["a"] + 1
+for i in 1 .. 5:
+  counts["b"] = counts["b"] + 1
+echo "counts a: " & $counts["a"]
+echo "counts b: " & $counts["b"]
+
+# =====================
+# Mixed collections
+# =====================
+echo "--- Mixed collections ---"
+let mixed = [{"name": "first"}, {"name": "second"}]
+echo "mixed[0].name: " & mixed[0]["name"]
+echo "mixed[1].name: " & mixed[1]["name"]
+
+# =====================
+# Callback pattern
+# =====================
+echo "--- Callback ---"
+proc map(arr, fn) =
+  var result = []
+  for x in arr:
+    result.add(fn(x))
+  return result
+
+proc double(x) =
+  return x * 2
+
+let doubled = map([1, 2, 3], double)
+echo "mapped: " & $doubled
+
+# =====================
+# Filter pattern
+# =====================
+echo "--- Filter ---"
+proc filter(arr, pred) =
+  var result = []
+  for x in arr:
+    if pred(x):
+      result.add(x)
+  return result
+
+proc isEven(x) =
+  return x % 2 == 0
+
+let evens = filter([1, 2, 3, 4, 5, 6], isEven)
+echo "evens: " & $evens
+
+# =====================
+# Reduce pattern
+# =====================
+echo "--- Reduce ---"
+proc reduce(arr, fn, init) =
+  var acc = init
+  for x in arr:
+    acc = fn(acc, x)
+  return acc
+
+proc addFn(a, b) =
+  return a + b
+
+let sum = reduce([1, 2, 3, 4, 5], addFn, 0)
+echo "sum via reduce: " & $sum
+
+# =====================
+# Compose functions
+# =====================
+echo "--- Compose ---"
+proc compose(f, g) =
+  proc composed(x) =
+    return f(g(x))
+  return composed
+
+proc addOne(x) =
+  return x + 1
+
+proc timesTwo(x) =
+  return x * 2
+
+let addThenMult = compose(timesTwo, addOne)
+let multThenAdd = compose(addOne, timesTwo)
+
+echo "add then mult 5: " & $addThenMult(5)
+echo "mult then add 5: " & $multThenAdd(5)
+
+# =====================
+# Mutual recursion pattern
+# =====================
+echo "--- Mutual recursion ---"
+proc pingPong(n, depth) =
+  if depth >= n:
+    return depth
+  return pongPing(n, depth + 1)
+
+proc pongPing(n, depth) =
+  if depth >= n:
+    return depth
+  return pingPong(n, depth + 1)
+
+echo "ping pong 10: " & $pingPong(10, 0)
+
+# =====================
+# Object with computed fields
+# =====================
+echo "--- Object computed ---"
+type Vec2 = object
+  x
+  y
+
+proc magnitude(v) =
+  return sqrt(v.x * v.x + v.y * v.y)
+
+let vec = Vec2(3, 4)
+echo "magnitude (3,4): " & $vec.magnitude
+
+# =====================
+# Chained comparisons behavior
+# =====================
+echo "--- Comparisons ---"
+let a = 5
+let b = 5
+let c = 5
+echo "all equal chain: " & $(a == b and b == c)
+
+let x = 1
+let y = 2  
+let z = 3
+echo "ascending chain: " & $(x < y and y < z)
+
+echo "=== Pathological Tests Complete ==="

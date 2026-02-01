@@ -1,0 +1,280 @@
+# Edge case tests to try to break the interpreter
+
+echo "=== Testing Edge Cases ==="
+
+# =====================
+# NIL HANDLING
+# =====================
+echo "--- Nil Tests ---"
+
+# Nil truthiness
+if nil:
+  echo "FAIL: nil is truthy"
+else:
+  echo "nil is falsy: PASS"
+
+# Nil equality
+echo "nil == nil: " & $(nil == nil)
+
+# Nil in array
+let arrWithNil = [1, nil, 3]
+echo "array with nil: " & $arrWithNil
+
+# =====================
+# EMPTY CONSTRUCTS
+# =====================
+echo "--- Empty Constructs ---"
+
+# Empty array
+let emptyArr = []
+echo "empty arr: " & $emptyArr
+echo "empty arr len: " & $emptyArr.len
+
+# Empty set
+let emptySet = {}
+echo "empty set: " & $emptySet
+echo "empty set card: " & $emptySet.card
+
+# Empty proc body with implicit nil return
+proc emptyProc() =
+  let x = 1
+
+let emptyResult = emptyProc()
+echo "empty proc returns: " & $emptyResult
+
+# Proc with no statements just returns nil
+proc reallyEmpty() =
+  discard
+
+# =====================
+# FUNCTION EDGE CASES  
+# =====================
+echo "--- Function Edge Cases ---"
+
+# Function without explicit return
+proc noReturn(x) =
+  let y = x * 2
+
+echo "no return value: " & $noReturn(5)
+
+# Deeply nested returns
+proc deepReturn(x) =
+  if x > 0:
+    if x > 5:
+      if x > 10:
+        return "very big"
+      return "big"
+    return "small"
+  return "not positive"
+
+echo "deep return 15: " & deepReturn(15)
+echo "deep return 7: " & deepReturn(7)
+echo "deep return 3: " & deepReturn(3)
+echo "deep return 0: " & deepReturn(0)
+
+# =====================
+# LOOP EDGE CASES
+# =====================
+echo "--- Loop Edge Cases ---"
+
+# Loop with zero iterations
+var zeroIter = 0
+for i in 5 ..< 5:
+  zeroIter = zeroIter + 1
+echo "zero iterations: " & $zeroIter
+
+# Loop with negative range (should not execute)
+var negRange = 0
+for i in 5 ..< 3:
+  negRange = negRange + 1
+echo "negative range: " & $negRange
+
+# While false - never executes
+var whileFalse = 0
+while false:
+  whileFalse = whileFalse + 1
+echo "while false: " & $whileFalse
+
+# Break in first iteration
+var breakFirst = 0
+for i in 0 ..< 100:
+  break
+  breakFirst = breakFirst + 1
+echo "break first: " & $breakFirst
+
+# Continue every iteration
+var contAll = 0
+for i in 0 ..< 5:
+  contAll = contAll + 1
+  continue
+  contAll = contAll + 100
+echo "continue all: " & $contAll
+
+# =====================
+# COLLECTION EDGE CASES
+# =====================
+echo "--- Collection Edge Cases ---"
+
+# Single element array
+let single = [42]
+echo "single[0]: " & $single[0]
+echo "single len: " & $single.len
+
+# Deeply nested array
+let deep = [[[1]]]
+echo "deep[0][0][0]: " & $deep[0][0][0]
+
+# Array of empty arrays
+let emptyArrays = [[], [], []]
+echo "empty arrays len: " & $emptyArrays.len
+echo "empty arrays[0] len: " & $emptyArrays[0].len
+
+# Set operations on empty sets
+let emptyA = {}
+let emptyB = {}
+echo "empty union card: " & $(emptyA + emptyB).card
+echo "empty intersect card: " & $(emptyA * emptyB).card
+
+# Table with empty string key
+let tableEmptyKey = {"": "empty key value"}
+echo "empty key: " & tableEmptyKey[""]
+
+# =====================
+# STRING EDGE CASES
+# =====================
+echo "--- String Edge Cases ---"
+
+# Empty string operations
+let emptyStr = ""
+echo "empty str len: " & $emptyStr.len
+echo "empty concat: " & $("" & "")
+
+# String with spaces
+let spaces = "   "
+echo "spaces len: " & $spaces.len
+
+# Single char string
+let oneChar = "x"
+echo "one char: " & oneChar
+echo "one char len: " & $oneChar.len
+
+# =====================
+# NUMERIC EDGE CASES
+# =====================
+echo "--- Numeric Edge Cases ---"
+
+# Zero operations
+echo "0 * 1000: " & $(0 * 1000)
+echo "0 / 1: " & $(0 / 1)
+echo "0 + 0: " & $(0 + 0)
+
+# Negative numbers
+echo "-5 * -3: " & $(-5 * -3)
+echo "-10 / -2: " & $(-10 / -2)
+echo "-5 - -3: " & $(-5 - -3)
+
+# Float precision
+echo "0.1 + 0.2: " & $(0.1 + 0.2)
+
+# Large integers
+echo "1000000 * 1000: " & $(1000000 * 1000)
+
+# =====================
+# COMPARISON EDGE CASES
+# =====================
+echo "--- Comparison Edge Cases ---"
+
+# Comparing same values
+echo "5 == 5: " & $(5 == 5)
+echo "5 != 5: " & $(5 != 5)
+echo "5 < 5: " & $(5 < 5)
+echo "5 <= 5: " & $(5 <= 5)
+echo "5 > 5: " & $(5 > 5)
+echo "5 >= 5: " & $(5 >= 5)
+
+# Int vs Float comparison
+echo "5 == 5.0: " & $(5 == 5.0)
+echo "5 < 5.5: " & $(5 < 5.5)
+
+# =====================
+# SCOPE EDGE CASES
+# =====================
+echo "--- Scope Edge Cases ---"
+
+# Variable shadowing in same name
+var shadow = "outer"
+if true:
+  var shadow = "inner"
+  echo "inner shadow: " & shadow
+echo "outer shadow: " & shadow
+
+# Modifying outer variable
+var outer = 0
+proc modifyOuter() =
+  outer = outer + 10
+
+modifyOuter()
+echo "modified outer: " & $outer
+
+# =====================
+# OPERATOR EDGE CASES
+# =====================
+echo "--- Operator Edge Cases ---"
+
+# Chained assignment-like ops
+var chain = 1
+chain = chain + 1
+chain = chain * 2
+chain = chain - 1
+echo "chain result: " & $chain
+
+# String concat empty
+echo "concat empty: " & ("a" & "" & "b")
+
+# =====================
+# OBJECT EDGE CASES
+# =====================
+echo "--- Object Edge Cases ---"
+
+type SingleField = object
+  value
+
+let singleObj = SingleField(42)
+echo "single field: " & $singleObj.value
+
+# Overwrite object field
+var mutableObj = SingleField(1)
+mutableObj.value = 99
+echo "mutated field: " & $mutableObj.value
+
+# =====================
+# TRUTHINESS EDGE CASES
+# =====================
+echo "--- Truthiness Edge Cases ---"
+
+# Various truthy/falsy values
+if 0:
+  echo "FAIL: 0 is truthy"
+else:
+  echo "0 is falsy: PASS"
+
+if 1:
+  echo "1 is truthy: PASS"
+
+if "":
+  echo "FAIL: empty string is truthy"
+else:
+  echo "empty string is falsy: PASS"
+
+if "x":
+  echo "non-empty string is truthy: PASS"
+
+if []:
+  echo "FAIL: empty array is truthy"
+else:
+  echo "empty array is falsy: PASS"
+
+if [1]:
+  echo "non-empty array is truthy: PASS"
+
+echo "=== All Edge Case Tests Complete ==="

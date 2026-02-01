@@ -1,0 +1,249 @@
+# Tests designed to find bugs and crashes
+
+echo "=== Break It Tests ==="
+
+# =====================
+# TEST 1: Modifying array during iteration
+# =====================
+echo "--- Test 1: Array modification during iteration ---"
+var arr1 = [1, 2, 3]
+var sum1 = 0
+for x in arr1:
+  sum1 = sum1 + x
+  # Don't modify during iteration in this test
+echo "sum without modify: " & $sum1
+
+# =====================
+# TEST 2: Recursive closures
+# =====================
+echo "--- Test 2: Recursive closures ---"
+proc makeRecursive() =
+  var count = 0
+  proc recurse(n) =
+    count = count + 1
+    if n <= 0:
+      return count
+    return recurse(n - 1)
+  return recurse
+
+let rec = makeRecursive()
+echo "recursive closure: " & $rec(5)
+
+# =====================
+# TEST 3: Closure capturing loop var correctly
+# =====================
+echo "--- Test 3: Closure capturing ---"
+var closures = []
+for i in 0 ..< 3:
+  let val = i
+  proc capture() =
+    return val
+  closures.add(capture)
+
+echo "closure 0: " & $closures[0]()
+echo "closure 1: " & $closures[1]()
+echo "closure 2: " & $closures[2]()
+
+# =====================
+# TEST 4: Multiple returns in expression
+# =====================
+echo "--- Test 4: Return in various positions ---"
+proc multiReturn(x) =
+  if x < 0:
+    return -1
+  if x == 0:
+    return 0
+  return 1
+
+echo "multiReturn(-5): " & $multiReturn(-5)
+echo "multiReturn(0): " & $multiReturn(0)
+echo "multiReturn(5): " & $multiReturn(5)
+
+# =====================
+# TEST 5: Very deep nesting
+# =====================
+echo "--- Test 5: Deep nesting ---"
+proc deepNest(n) =
+  if n > 0:
+    if n > 0:
+      if n > 0:
+        if n > 0:
+          if n > 0:
+            return n * 2
+  return 0
+
+echo "deep nest 5: " & $deepNest(5)
+
+# =====================
+# TEST 6: Array of functions
+# =====================
+echo "--- Test 6: Array of functions ---"
+proc f1() =
+  return 1
+proc f2() =
+  return 2
+proc f3() =
+  return 3
+
+let funcs = [f1, f2, f3]
+echo "funcs[0](): " & $funcs[0]()
+echo "funcs[1](): " & $funcs[1]()
+echo "funcs[2](): " & $funcs[2]()
+
+# Sum by calling each
+var funcSum = 0
+for f in funcs:
+  funcSum = funcSum + f()
+echo "func sum: " & $funcSum
+
+# =====================
+# TEST 7: Chained method calls on result
+# =====================
+echo "--- Test 7: Chained results ---"
+proc makeArray() =
+  return [1, 2, 3, 4, 5]
+
+echo "makeArray().len: " & $makeArray().len
+echo "makeArray()[2]: " & $makeArray()[2]
+
+# =====================
+# TEST 8: Nested table access
+# =====================
+echo "--- Test 8: Nested tables ---"
+let nested = {"a": {"b": {"c": "deep"}}}
+echo "nested a.b.c: " & nested["a"]["b"]["c"]
+
+# =====================
+# TEST 9: Set with same element types
+# =====================
+echo "--- Test 9: Set duplicates ---"
+let setDup = {1, 1, 1, 2, 2, 3}
+echo "set with dups card: " & $setDup.card
+echo "set contents: " & $setDup
+
+# =====================
+# TEST 10: Boolean in arithmetic context
+# =====================
+echo "--- Test 10: Boolean arithmetic ---"
+# This might fail or behave unexpectedly
+# echo true + 1  # Would this work?
+
+# =====================
+# TEST 11: Comparing different types
+# =====================
+echo "--- Test 11: Type comparisons ---"
+echo "1 == 1.0: " & $(1 == 1.0)
+echo "0 == 0.0: " & $(0 == 0.0)
+
+# =====================
+# TEST 12: Empty function call
+# =====================
+echo "--- Test 12: No-arg function ---"
+proc noArgs() =
+  return 42
+
+echo "noArgs(): " & $noArgs()
+
+# =====================
+# TEST 13: Function as last expression
+# =====================
+echo "--- Test 13: Function as expression ---"
+proc returnsFunc() =
+  proc inner() =
+    return 99
+  return inner
+
+let gotFunc = returnsFunc()
+echo "got func(): " & $gotFunc()
+
+# =====================
+# TEST 14: Modifying closure state
+# =====================
+echo "--- Test 14: Closure state ---"
+proc makeCounter() =
+  var n = 0
+  proc inc() =
+    n = n + 1
+    return n
+  proc dec() =
+    n = n - 1
+    return n  
+  proc get() =
+    return n
+  return [inc, dec, get]
+
+let counter = makeCounter()
+let inc = counter[0]
+let dec = counter[1]
+let get = counter[2]
+
+echo "initial: " & $get()
+echo "inc: " & $inc()
+echo "inc: " & $inc()
+echo "inc: " & $inc()
+echo "dec: " & $dec()
+echo "final: " & $get()
+
+# =====================
+# TEST 15: String indexing boundary
+# =====================
+echo "--- Test 15: String boundaries ---"
+let str = "abc"
+echo "first char: " & str[0]
+echo "last char: " & str[str.len - 1]
+
+# =====================
+# TEST 16: Nested UFCS
+# =====================
+echo "--- Test 16: UFCS chains ---"
+proc addTwo(x) =
+  return x + 2
+
+proc times3(x) =
+  return x * 3
+
+echo "5.addTwo.times3: " & $5.addTwo.times3
+echo "(5.addTwo).times3: " & $(5.addTwo).times3
+echo "5.addTwo().times3(): " & $5.addTwo().times3()
+
+# =====================
+# TEST 17: Command syntax edge
+# =====================
+echo "--- Test 17: Command syntax ---"
+echo addTwo 5
+echo times3 4
+
+# =====================
+# TEST 18: Table iteration
+# =====================
+echo "--- Test 18: Table operations ---"
+var t = {"x": 1, "y": 2}
+echo "keys len: " & $t.keys.len
+echo "values len: " & $t.values.len
+
+# =====================
+# TEST 19: Return in while
+# =====================
+echo "--- Test 19: Return in while ---"
+proc findInLoop() =
+  var i = 0
+  while i < 100:
+    if i == 7:
+      return i
+    i = i + 1
+  return -1
+
+echo "find 7: " & $findInLoop()
+
+# =====================
+# TEST 20: Multiple nested for loops
+# =====================
+echo "--- Test 20: Triple nested loop ---"
+var tripleSum = 0
+for i in 0 ..< 3:
+  for j in 0 ..< 3:
+    for k in 0 ..< 3:
+      tripleSum = tripleSum + 1
+echo "triple nest count: " & $tripleSum
+
+echo "=== All Break It Tests Complete ==="

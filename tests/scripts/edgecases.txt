@@ -1,0 +1,74 @@
+=== Testing Edge Cases ===
+--- Nil Tests ---
+nil is falsy: PASS
+nil == nil: true
+array with nil: [1, nil, 3]
+--- Empty Constructs ---
+empty arr: []
+empty arr len: 0
+empty set: {}
+empty set card: 0
+empty proc returns: 1
+--- Function Edge Cases ---
+no return value: 10
+deep return 15: very big
+deep return 7: big
+deep return 3: small
+deep return 0: not positive
+--- Loop Edge Cases ---
+zero iterations: 0
+negative range: 0
+while false: 0
+break first: 0
+continue all: 5
+--- Collection Edge Cases ---
+single[0]: 42
+single len: 1
+deep[0][0][0]: 1
+empty arrays len: 3
+empty arrays[0] len: 0
+empty union card: 0
+empty intersect card: 0
+empty key: empty key value
+--- String Edge Cases ---
+empty str len: 0
+empty concat: 
+spaces len: 3
+one char: x
+one char len: 1
+--- Numeric Edge Cases ---
+0 * 1000: 0
+0 / 1: 0.0
+0 + 0: 0
+-5 * -3: 15
+-10 / -2: 5.0
+-5 - -3: -2
+0.1 + 0.2: 0.30000000000000004
+1000000 * 1000: 1000000000
+--- Comparison Edge Cases ---
+5 == 5: true
+5 != 5: false
+5 < 5: false
+5 <= 5: true
+5 > 5: false
+5 >= 5: true
+5 == 5.0: true
+5 < 5.5: true
+--- Scope Edge Cases ---
+inner shadow: inner
+outer shadow: outer
+modified outer: 10
+--- Operator Edge Cases ---
+chain result: 3
+concat empty: ab
+--- Object Edge Cases ---
+single field: 42
+mutated field: 99
+--- Truthiness Edge Cases ---
+0 is falsy: PASS
+1 is truthy: PASS
+empty string is falsy: PASS
+non-empty string is truthy: PASS
+empty array is falsy: PASS
+non-empty array is truthy: PASS
+=== All Edge Case Tests Complete ===

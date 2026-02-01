@@ -1,0 +1,61 @@
+=== Break It Tests ===
+--- Test 1: Array modification during iteration ---
+sum without modify: 6
+--- Test 2: Recursive closures ---
+recursive closure: 6
+--- Test 3: Closure capturing ---
+closure 0: 0
+closure 1: 1
+closure 2: 2
+--- Test 4: Return in various positions ---
+multiReturn(-5): -1
+multiReturn(0): 0
+multiReturn(5): 1
+--- Test 5: Deep nesting ---
+deep nest 5: 10
+--- Test 6: Array of functions ---
+funcs[0](): 1
+funcs[1](): 2
+funcs[2](): 3
+func sum: 6
+--- Test 7: Chained results ---
+makeArray().len: 5
+makeArray()[2]: 3
+--- Test 8: Nested tables ---
+nested a.b.c: deep
+--- Test 9: Set duplicates ---
+set with dups card: 3
+set contents: {1, 2, 3}
+--- Test 10: Boolean arithmetic ---
+--- Test 11: Type comparisons ---
+1 == 1.0: true
+0 == 0.0: true
+--- Test 12: No-arg function ---
+noArgs(): 42
+--- Test 13: Function as expression ---
+got func(): 99
+--- Test 14: Closure state ---
+initial: 0
+inc: 1
+inc: 2
+inc: 3
+dec: 2
+final: 2
+--- Test 15: String boundaries ---
+first char: a
+last char: c
+--- Test 16: UFCS chains ---
+5.addTwo.times3: 21
+(5.addTwo).times3: 21
+5.addTwo().times3(): 21
+--- Test 17: Command syntax ---
+7
+12
+--- Test 18: Table operations ---
+keys len: 2
+values len: 2
+--- Test 19: Return in while ---
+find 7: 7
+--- Test 20: Triple nested loop ---
+triple nest count: 27
+=== All Break It Tests Complete ===
