@@ -214,6 +214,157 @@ let r = foo()"""
     doAssert res.value.kind == vkInt
     doAssert res.value.intVal == 99
   
+  test "Interactive error does not stop VM":
+    let code = """let x = 10
+let y = 20
+let z = 30"""
+    let myvm = newVM()
+    let ast = parse(code)
+    myvm.load(ast)
+    
+    # Execute first statement
+    myvm.step()  # let x = 10
+    doAssert myvm.currentLine == 2
+    doAssert not myvm.isFinished
+    
+    # Cause an error in interactive mode
+    let res = myvm.runInteractive("undefined_variable")
+    doAssert not res.success
+    doAssert res.error.len > 0
+    
+    # VM should still be in the same state - not stopped
+    doAssert myvm.currentLine == 2
+    doAssert not myvm.isFinished
+    doAssert myvm.frames.len > 0
+    
+    # Should be able to continue stepping
+    myvm.step()  # let y = 20
+    doAssert myvm.currentLine == 3
+    
+    # Another interactive error
+    let res2 = myvm.runInteractive("1 / 0")  # Division by zero
+    # Even if this causes an error, VM continues
+    
+    # Can still finish execution
+    myvm.step()  # let z = 30
+    doAssert myvm.isFinished
+  
+  test "Interactive can set variables":
+    let code = """let x = 10
+var y = 0
+echo y"""
+    let myvm = newVM()
+    let ast = parse(code)
+    myvm.load(ast)
+    
+    # Execute let x = 10
+    myvm.step()
+    # Execute var y = 0
+    myvm.step()
+    
+    # Query y before modification
+    var res = myvm.runInteractive("y")
+    doAssert res.success
+    doAssert res.value.intVal == 0
+    
+    # Modify y via interactive mode
+    res = myvm.runInteractive("y = 42")
+    doAssert res.success
+    
+    # Query y after modification
+    res = myvm.runInteractive("y")
+    doAssert res.success
+    doAssert res.value.intVal == 42
+    
+    # The modification persists when we continue execution
+    myvm.step()  # echo y - should print 42
+    doAssert myvm.output.len > 0
+    doAssert myvm.output[^1] == "42"
+  
+  test "Interactive can define new variables":
+    let code = "let x = 5"
+    let myvm = newVM()
+    let ast = parse(code)
+    myvm.load(ast)
+    
+    # Execute let x = 5
+    myvm.step()
+    
+    # Define a new variable interactively
+    var res = myvm.runInteractive("let newVar = x * 10")
+    doAssert res.success
+    
+    # The new variable should be accessible
+    res = myvm.runInteractive("newVar")
+    doAssert res.success
+    doAssert res.value.intVal == 50
+    
+    # Can use both variables in expressions
+    res = myvm.runInteractive("x + newVar")
+    doAssert res.success
+    doAssert res.value.intVal == 55
+  
+  test "Interactive function call with side effects":
+    let code = """var counter = 0
+
+proc increment() =
+  counter = counter + 1
+  return counter
+
+let x = 1"""
+    let myvm = newVM()
+    let ast = parse(code)
+    myvm.load(ast)
+    
+    # Execute var counter = 0
+    myvm.step()
+    # Execute proc increment
+    myvm.step()
+    # Execute let x = 1
+    myvm.step()
+    
+    # Check counter is 0
+    var res = myvm.runInteractive("counter")
+    doAssert res.success
+    doAssert res.value.intVal == 0
+    
+    # Call increment() interactively
+    res = myvm.runInteractive("increment()")
+    doAssert res.success
+    doAssert res.value.intVal == 1
+    
+    # Counter should now be 1
+    res = myvm.runInteractive("counter")
+    doAssert res.success
+    doAssert res.value.intVal == 1
+    
+    # Call again
+    res = myvm.runInteractive("increment()")
+    doAssert res.success
+    doAssert res.value.intVal == 2
+    
+    # Counter should now be 2
+    res = myvm.runInteractive("counter")
+    doAssert res.success
+    doAssert res.value.intVal == 2
+  
+  test "Multiple interactive errors don't accumulate":
+    let code = "let x = 42"
+    let myvm = newVM()
+    let ast = parse(code)
+    myvm.load(ast)
+    myvm.step()
+    
+    # Cause multiple errors
+    for i in 1..5:
+      let res = myvm.runInteractive("undefined" & $i)
+      doAssert not res.success
+    
+    # VM should still work fine
+    let res = myvm.runInteractive("x")
+    doAssert res.success
+    doAssert res.value.intVal == 42
+  
   test "Empty input":
     let myvm = newVM()
     let res = myvm.runInteractive("")
