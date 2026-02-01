@@ -1,8 +1,7 @@
 ## nimmy_parser.nim
 ## Parser/AST builder for the Nimmy scripting language
 
-import nimmy_types
-import nimmy_lexer
+import types, lexer
 import std/[strformat, strutils]
 
 type

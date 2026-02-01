@@ -1,8 +1,8 @@
 ## nimmy_vm.nim
 ## Virtual Machine for the Nimmy scripting language
 
-import nimmy_types
-import nimmy_utils
+import types
+import utils
 import std/[strformat, tables, strutils]
 
 type

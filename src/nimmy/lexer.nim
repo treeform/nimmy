@@ -1,7 +1,7 @@
 ## nimmy_lexer.nim
 ## Tokenizer/Lexer for the Nimmy scripting language
 
-import nimmy_types
+import types
 import std/[strutils, strformat, tables]
 
 type

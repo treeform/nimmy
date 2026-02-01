@@ -1,15 +1,11 @@
 ## Main entry point and API for the Nimmy scripting language.
 import
   std/[tables, strutils, strformat, math],
-  nimmy_types,
-  nimmy_parser,
-  nimmy_vm,
-  nimmy_debug,
-  nimmy_utils
+  nimmy/[types, parser, vm, debug, utils]
 
-export nimmy_types
-export nimmy_vm.newVM, nimmy_vm.addProc, nimmy_vm.getOutput, nimmy_vm.clearOutput
-export nimmy_debug
+export types
+export vm.newVM, vm.addProc, vm.getOutput, vm.clearOutput
+export debug.newDebugger
 
 type
   NimmyVM* = ref object

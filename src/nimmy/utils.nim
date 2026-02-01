@@ -1,7 +1,7 @@
 ## nimmy_utils.nim
 ## Utility functions for the Nimmy scripting language
 
-import nimmy_types
+import types
 import std/[strformat, strutils, tables]
 
 # Forward declarations

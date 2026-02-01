@@ -1,9 +1,9 @@
 ## nimmy_debug.nim
 ## Debugger support for the Nimmy scripting language
 
-import nimmy_types
-import nimmy_utils
-import nimmy_vm
+import types
+import utils
+import vm
 import std/[strformat, tables, strutils]
 
 type
