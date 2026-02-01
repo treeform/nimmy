@@ -1,0 +1,48 @@
+# Demo script for the debugger.
+# Shows variables, function calls, and objects.
+
+# Simple variables
+let name = "Alice"
+var score = 0
+
+# Object type definition
+type Player = object
+  name
+  level
+  health
+
+# Create an object
+let player = Player("Hero", 1, 100)
+
+# A simple function
+proc greet(who) =
+  echo "Hello, " & who & "!"
+  return "greeted"
+
+# Call the function
+let result = greet(name)
+
+# Modify variables
+score = 10
+score = score + 5
+
+# Array with items
+var inventory = ["sword", "shield", "potion"]
+push(inventory, "gold")
+
+# Nested object
+type Enemy = object
+  name
+  health
+  loot
+
+let goblin = Enemy("Goblin", 30, ["coins", "key"])
+
+# Loop through something
+for item in inventory:
+  echo "You have: " & item
+
+# Final state
+echo "Score: " & str(score)
+echo "Player: " & player.name
+echo "Enemy: " & goblin.name
