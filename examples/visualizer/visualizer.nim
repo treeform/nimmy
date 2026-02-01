@@ -1,0 +1,804 @@
+## Visual Debugger for Nimmy scripts.
+## A graphical step-by-step debugger using Silky UI.
+
+import
+  std/[os, strformat, strutils, tables],
+  opengl, windy, bumpy, vmath, chroma,
+  silky,
+  ../../src/nimmy/[types, parser, vm, utils]
+
+# =============================================================================
+# Atlas Setup
+# =============================================================================
+
+let builder = newAtlasBuilder(1024, 4)
+builder.addDir("data/", "data/")
+builder.addFont("data/IBMPlexSans-Regular.ttf", "H1", 24.0)
+builder.addFont("data/IBMPlexSans-Regular.ttf", "Default", 16.0)
+builder.addFont("data/IBMPlexSans-Regular.ttf", "Code", 14.0)
+builder.write("dist/atlas.png", "dist/atlas.json")
+
+# =============================================================================
+# Window Setup
+# =============================================================================
+
+let window = newWindow(
+  "Nimmy Visual Debugger",
+  ivec2(1400, 900),
+  vsync = true
+)
+makeContextCurrent(window)
+loadExtensions()
+
+let sk = newSilky("dist/atlas.png", "dist/atlas.json")
+
+proc snapToPixels(rect: Rect): Rect =
+  rect(rect.x.int.float32, rect.y.int.float32, rect.w.int.float32, rect.h.int.float32)
+
+# =============================================================================
+# Panel System Types
+# =============================================================================
+
+type
+  AreaLayout = enum
+    Horizontal
+    Vertical
+
+  PanelKind = enum
+    pkSourceCode
+    pkStackTrace
+    pkOutput
+    pkVariables
+
+  Area = ref object
+    layout: AreaLayout
+    areas: seq[Area]
+    panels: seq[Panel]
+    split: float32
+    selectedPanelNum: int
+    rect: Rect
+
+  Panel = ref object
+    name: string
+    kind: PanelKind
+    parentArea: Area
+
+  AreaScan = enum
+    Header
+    Body
+    North
+    South
+    East
+    West
+
+# =============================================================================
+# Debugger State
+# =============================================================================
+
+type
+  DebuggerState = ref object
+    scriptPath: string
+    source: string
+    sourceLines: seq[string]
+    ast: Node
+    vm: VM
+    currentLine: int
+    running: bool
+    finished: bool
+    outputLines: seq[string]
+    callStack: seq[string]
+    stmtIndex: int
+    stmts: seq[Node]
+
+var debugState: DebuggerState
+
+proc initDebugger(scriptPath: string) =
+  debugState = DebuggerState(
+    scriptPath: scriptPath,
+    currentLine: 0,
+    running: false,
+    finished: false,
+    outputLines: @[],
+    callStack: @["<main>"],
+    stmtIndex: 0,
+    stmts: @[]
+  )
+
+  if not fileExists(scriptPath):
+    debugState.source = "# Error: File not found: " & scriptPath
+    debugState.sourceLines = @[debugState.source]
+    debugState.finished = true
+    return
+
+  debugState.source = readFile(scriptPath)
+  debugState.sourceLines = debugState.source.splitLines()
+  debugState.ast = parse(debugState.source)
+  debugState.vm = newVM()
+
+  # Register minimal built-ins
+  debugState.vm.addProc("len") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "len() takes exactly 1 argument")
+    case args[0].kind
+    of vkString: intValue(args[0].strVal.len)
+    of vkArray: intValue(args[0].arrayVal.len)
+    of vkTable: intValue(args[0].tableVal.len)
+    else: raise newException(RuntimeError, "Cannot get length of " & typeName(args[0]))
+
+  debugState.vm.addProc("str") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "str() takes exactly 1 argument")
+    stringValue($args[0])
+
+  debugState.vm.addProc("add") do (args: seq[Value]) -> Value:
+    if args.len != 2:
+      raise newException(RuntimeError, "add() takes exactly 2 arguments")
+    if args[0].kind != vkArray:
+      raise newException(RuntimeError, "First argument to add() must be an array")
+    args[0].arrayVal.add(args[1])
+    args[0]
+
+  debugState.vm.addProc("pop") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "pop() takes exactly 1 argument")
+    if args[0].kind != vkArray:
+      raise newException(RuntimeError, "Argument to pop() must be an array")
+    if args[0].arrayVal.len == 0:
+      raise newException(RuntimeError, "Cannot pop from empty array")
+    args[0].arrayVal.pop()
+
+  # Collect top-level statements
+  if debugState.ast.kind == nkProgram:
+    debugState.stmts = debugState.ast.stmts
+
+  if debugState.stmts.len > 0:
+    debugState.currentLine = debugState.stmts[0].line
+    debugState.running = true
+
+proc stepDebugger() =
+  if debugState == nil or debugState.finished or debugState.stmtIndex >= debugState.stmts.len:
+    if debugState != nil:
+      debugState.finished = true
+    return
+
+  try:
+    let stmt = debugState.stmts[debugState.stmtIndex]
+    discard debugState.vm.eval(stmt)
+
+    # Capture output
+    if debugState.vm.output.len > debugState.outputLines.len:
+      for i in debugState.outputLines.len ..< debugState.vm.output.len:
+        debugState.outputLines.add(debugState.vm.output[i])
+
+    debugState.stmtIndex += 1
+
+    if debugState.stmtIndex < debugState.stmts.len:
+      debugState.currentLine = debugState.stmts[debugState.stmtIndex].line
+    else:
+      debugState.finished = true
+
+  except NimmyError as e:
+    debugState.outputLines.add("Error: " & e.msg)
+    debugState.finished = true
+
+# =============================================================================
+# Panel Constants
+# =============================================================================
+
+const
+  AreaHeaderHeight = 32.0
+  AreaMargin = 6.0
+  BackgroundColor = parseHtmlColor("#1e1e2e").rgbx
+  LineHighlightColor = parseHtmlColor("#44475a").rgbx
+  CurrentLineColor = parseHtmlColor("#6272a4").rgbx
+  LineNumberColor = parseHtmlColor("#6272a4").rgbx
+  CodeColor = parseHtmlColor("#f8f8f2").rgbx
+  KeywordColor = parseHtmlColor("#ff79c6").rgbx
+  StringColor = parseHtmlColor("#f1fa8c").rgbx
+  CommentColor = parseHtmlColor("#6272a4").rgbx
+
+# =============================================================================
+# Panel System Globals
+# =============================================================================
+
+var
+  rootArea: Area
+  dragArea: Area
+  dragPanel: Panel
+  dropHighlight: Rect
+  showDropHighlight: bool
+  maybeDragStartPos: Vec2
+  maybeDragPanel: Panel
+
+# =============================================================================
+# Panel Logic
+# =============================================================================
+
+proc movePanels*(area: Area, panels: seq[Panel])
+
+proc clear*(area: Area) =
+  for panel in area.panels:
+    panel.parentArea = nil
+  for subarea in area.areas:
+    subarea.clear()
+  area.panels.setLen(0)
+  area.areas.setLen(0)
+
+proc removeBlankAreas*(area: Area) =
+  if area.areas.len > 0:
+    assert area.areas.len == 2
+    if area.areas[0].panels.len == 0 and area.areas[0].areas.len == 0:
+      if area.areas[1].panels.len > 0:
+        area.movePanels(area.areas[1].panels)
+        area.areas.setLen(0)
+      elif area.areas[1].areas.len > 0:
+        let oldAreas = area.areas
+        area.areas = area.areas[1].areas
+        area.split = oldAreas[1].split
+        area.layout = oldAreas[1].layout
+    elif area.areas[1].panels.len == 0 and area.areas[1].areas.len == 0:
+      if area.areas[0].panels.len > 0:
+        area.movePanels(area.areas[0].panels)
+        area.areas.setLen(0)
+      elif area.areas[0].areas.len > 0:
+        let oldAreas = area.areas
+        area.areas = area.areas[0].areas
+        area.split = oldAreas[0].split
+        area.layout = oldAreas[0].layout
+
+    for subarea in area.areas:
+      removeBlankAreas(subarea)
+
+proc addPanel*(area: Area, name: string, kind: PanelKind) =
+  let panel = Panel(name: name, kind: kind, parentArea: area)
+  area.panels.add(panel)
+
+proc movePanel*(area: Area, panel: Panel) =
+  let idx = panel.parentArea.panels.find(panel)
+  if idx != -1:
+    panel.parentArea.panels.delete(idx)
+  area.panels.add(panel)
+  panel.parentArea = area
+
+proc insertPanel*(area: Area, panel: Panel, index: int) =
+  let idx = panel.parentArea.panels.find(panel)
+  var finalIndex = index
+
+  if panel.parentArea == area and idx != -1:
+    if idx < index:
+      finalIndex = index - 1
+
+  if idx != -1:
+    panel.parentArea.panels.delete(idx)
+
+  finalIndex = clamp(finalIndex, 0, area.panels.len)
+  area.panels.insert(panel, finalIndex)
+  panel.parentArea = area
+  area.selectedPanelNum = finalIndex
+
+proc getTabInsertInfo(area: Area, mousePos: Vec2): (int, Rect) =
+  var x = area.rect.x + 4
+  let headerH = AreaHeaderHeight
+
+  if area.panels.len == 0:
+    return (0, rect(x, area.rect.y + 4, 4, headerH - 4))
+
+  var bestIndex = 0
+  var minDist = float32.high
+  var bestX = x
+
+  let dist0 = abs(mousePos.x - x)
+  minDist = dist0
+  bestX = x
+  bestIndex = 0
+
+  for i, panel in area.panels:
+    let textSize = sk.getTextSize("Default", panel.name)
+    let tabW = textSize.x + 16
+    let gapX = x + tabW + 2
+    let dist = abs(mousePos.x - gapX)
+    if dist < minDist:
+      minDist = dist
+      bestIndex = i + 1
+      bestX = gapX
+    x += tabW + 2
+
+  return (bestIndex, rect(bestX - 2, area.rect.y + 4, 4, headerH - 4))
+
+proc movePanels*(area: Area, panels: seq[Panel]) =
+  var panelList = panels
+  for panel in panelList:
+    area.movePanel(panel)
+
+proc split*(area: Area, layout: AreaLayout) =
+  let
+    area1 = Area(rect: area.rect)
+    area2 = Area(rect: area.rect)
+  area.layout = layout
+  area.split = 0.5
+  area.areas.add(area1)
+  area.areas.add(area2)
+
+proc scan*(area: Area): (Area, AreaScan, Rect) =
+  let mousePos = window.mousePos.vec2
+  var
+    targetArea: Area
+    areaScan: AreaScan
+    resRect: Rect
+
+  proc visit(area: Area) =
+    if not mousePos.overlaps(area.rect):
+      return
+
+    if area.areas.len > 0:
+      for subarea in area.areas:
+        visit(subarea)
+    else:
+      let
+        headerRect = rect(area.rect.xy, vec2(area.rect.w, AreaHeaderHeight))
+        bodyRect = rect(area.rect.xy + vec2(0, AreaHeaderHeight), vec2(area.rect.w, area.rect.h - AreaHeaderHeight))
+        northRect = rect(area.rect.xy + vec2(0, AreaHeaderHeight), vec2(area.rect.w, area.rect.h * 0.2))
+        southRect = rect(area.rect.xy + vec2(0, area.rect.h * 0.8), vec2(area.rect.w, area.rect.h * 0.2))
+        eastRect = rect(area.rect.xy + vec2(area.rect.w * 0.8, 0) + vec2(0, AreaHeaderHeight), vec2(area.rect.w * 0.2, area.rect.h - AreaHeaderHeight))
+        westRect = rect(area.rect.xy + vec2(0, AreaHeaderHeight), vec2(area.rect.w * 0.2, area.rect.h - AreaHeaderHeight))
+
+      if mousePos.overlaps(headerRect):
+        areaScan = Header
+        resRect = headerRect
+      elif mousePos.overlaps(northRect):
+        areaScan = North
+        resRect = northRect
+      elif mousePos.overlaps(southRect):
+        areaScan = South
+        resRect = southRect
+      elif mousePos.overlaps(eastRect):
+        areaScan = East
+        resRect = eastRect
+      elif mousePos.overlaps(westRect):
+        areaScan = West
+        resRect = westRect
+      elif mousePos.overlaps(bodyRect):
+        areaScan = Body
+        resRect = bodyRect
+
+      targetArea = area
+
+  visit(rootArea)
+  return (targetArea, areaScan, resRect)
+
+# =============================================================================
+# Panel Content Rendering
+# =============================================================================
+
+proc formatValue(v: Value, indent: int = 0): string =
+  let pad = "  ".repeat(indent)
+
+  if v.isNil:
+    return pad & "nil"
+
+  case v.kind
+  of vkNil:
+    pad & "nil"
+  of vkBool:
+    pad & $v.boolVal
+  of vkInt:
+    pad & $v.intVal
+  of vkFloat:
+    pad & $v.floatVal
+  of vkString:
+    pad & "\"" & v.strVal & "\""
+  of vkArray:
+    if v.arrayVal.len == 0:
+      pad & "[]"
+    else:
+      var parts: seq[string] = @[]
+      for elem in v.arrayVal:
+        parts.add(formatValue(elem, 0))
+      pad & "[" & parts.join(", ") & "]"
+  of vkSet:
+    if v.setVal.len == 0:
+      pad & "{}"
+    else:
+      var parts: seq[string] = @[]
+      for elem in v.setVal:
+        parts.add(formatValue(elem, 0))
+      pad & "{" & parts.join(", ") & "}"
+  of vkTable:
+    if v.tableVal.len == 0:
+      pad & "{:}"
+    else:
+      var parts: seq[string] = @[]
+      for k, val in v.tableVal:
+        parts.add("\"" & k & "\": " & formatValue(val, 0))
+      pad & "{" & parts.join(", ") & "}"
+  of vkObject:
+    var parts: seq[string] = @[]
+    for k, val in v.objFields:
+      parts.add(k & ": " & formatValue(val, 0))
+    pad & v.objType & "(" & parts.join(", ") & ")"
+  of vkProc:
+    pad & "<proc " & v.procName & ">"
+  of vkNativeProc:
+    pad & "<native " & v.nativeName & ">"
+  of vkType:
+    pad & "<type " & v.typeNameVal & ">"
+  of vkRange:
+    if v.rangeInclusive:
+      pad & $v.rangeStart & ".." & $v.rangeEnd
+    else:
+      pad & $v.rangeStart & "..<" & $v.rangeEnd
+
+proc drawSourceCodePanel(contentRect: Rect) =
+  if debugState == nil:
+    return
+
+  let padding = 8.0'f32
+  var y = contentRect.y + padding
+
+  sk.pushClipRect(contentRect)
+
+  for i, line in debugState.sourceLines:
+    let lineNum = i + 1
+    let isCurrentLine = lineNum == debugState.currentLine and not debugState.finished
+
+    # Draw line highlight
+    if isCurrentLine:
+      sk.drawRect(
+        vec2(contentRect.x, y - 2),
+        vec2(contentRect.w, 18),
+        CurrentLineColor
+      )
+
+    # Draw line number
+    let lineNumStr = align($lineNum, 4)
+    discard sk.drawText("Code", lineNumStr, vec2(contentRect.x + padding, y), LineNumberColor)
+
+    # Draw code
+    let codeX = contentRect.x + padding + 40
+    discard sk.drawText("Code", line, vec2(codeX, y), CodeColor)
+
+    y += 18
+
+    if y > contentRect.y + contentRect.h:
+      break
+
+  sk.popClipRect()
+
+proc drawStackTracePanel(contentRect: Rect) =
+  if debugState == nil:
+    return
+
+  let padding = 8.0'f32
+  var y = contentRect.y + padding
+
+  sk.pushClipRect(contentRect)
+
+  discard sk.drawText("Default", "Call Stack:", vec2(contentRect.x + padding, y), rgbx(200, 200, 200, 255))
+  y += 24
+
+  for i, frame in debugState.callStack:
+    let indent = "  ".repeat(i)
+    discard sk.drawText("Code", indent & frame, vec2(contentRect.x + padding, y), CodeColor)
+    y += 18
+
+  if debugState.finished:
+    y += 10
+    discard sk.drawText("Default", "Execution finished.", vec2(contentRect.x + padding, y), rgbx(100, 200, 100, 255))
+
+  sk.popClipRect()
+
+proc drawOutputPanel(contentRect: Rect) =
+  if debugState == nil:
+    return
+
+  let padding = 8.0'f32
+  var y = contentRect.y + padding
+
+  sk.pushClipRect(contentRect)
+
+  discard sk.drawText("Default", "Console Output:", vec2(contentRect.x + padding, y), rgbx(200, 200, 200, 255))
+  y += 24
+
+  if debugState.outputLines.len == 0:
+    discard sk.drawText("Code", "(no output yet)", vec2(contentRect.x + padding, y), rgbx(128, 128, 128, 255))
+  else:
+    for line in debugState.outputLines:
+      discard sk.drawText("Code", line, vec2(contentRect.x + padding, y), CodeColor)
+      y += 18
+
+      if y > contentRect.y + contentRect.h:
+        break
+
+  sk.popClipRect()
+
+proc drawVariablesPanel(contentRect: Rect) =
+  if debugState == nil:
+    return
+
+  let padding = 8.0'f32
+  var y = contentRect.y + padding
+
+  sk.pushClipRect(contentRect)
+
+  discard sk.drawText("Default", "Variables:", vec2(contentRect.x + padding, y), rgbx(200, 200, 200, 255))
+  y += 24
+
+  var hasVars = false
+  var scope = debugState.vm.currentScope
+
+  while scope != nil:
+    for name, value in scope.vars:
+      # Skip built-in functions
+      if value.kind == vkNativeProc:
+        continue
+
+      hasVars = true
+      let valueStr = formatValue(value, 0)
+      let displayStr = name & " = " & valueStr
+      discard sk.drawText("Code", displayStr, vec2(contentRect.x + padding, y), CodeColor)
+      y += 18
+
+      if y > contentRect.y + contentRect.h:
+        break
+
+    scope = scope.parent
+
+  if not hasVars:
+    discard sk.drawText("Code", "(no variables)", vec2(contentRect.x + padding, y), rgbx(128, 128, 128, 255))
+
+  sk.popClipRect()
+
+proc drawPanelContent(panel: Panel, contentRect: Rect) =
+  case panel.kind
+  of pkSourceCode:
+    drawSourceCodePanel(contentRect)
+  of pkStackTrace:
+    drawStackTracePanel(contentRect)
+  of pkOutput:
+    drawOutputPanel(contentRect)
+  of pkVariables:
+    drawVariablesPanel(contentRect)
+
+# =============================================================================
+# Panel Drawing
+# =============================================================================
+
+proc drawAreaRecursive(area: Area, r: Rect) =
+  area.rect = r.snapToPixels()
+
+  if area.areas.len > 0:
+    let m = AreaMargin / 2
+    if area.layout == Horizontal:
+      let splitPos = r.h * area.split
+      let splitRect = rect(r.x, r.y + splitPos - 2, r.w, 4)
+
+      if dragArea == nil and window.mousePos.vec2.overlaps(splitRect):
+        sk.cursor = Cursor(kind: ResizeUpDownCursor)
+        if window.buttonPressed[MouseLeft]:
+          dragArea = area
+
+      let r1 = rect(r.x, r.y, r.w, splitPos - m)
+      let r2 = rect(r.x, r.y + splitPos + m, r.w, r.h - splitPos - m)
+      drawAreaRecursive(area.areas[0], r1)
+      drawAreaRecursive(area.areas[1], r2)
+
+    else:
+      let splitPos = r.w * area.split
+      let splitRect = rect(r.x + splitPos - 2, r.y, 4, r.h)
+
+      if dragArea == nil and window.mousePos.vec2.overlaps(splitRect):
+        sk.cursor = Cursor(kind: ResizeLeftRightCursor)
+        if window.buttonPressed[MouseLeft]:
+          dragArea = area
+
+      let r1 = rect(r.x, r.y, splitPos - m, r.h)
+      let r2 = rect(r.x + splitPos + m, r.y, r.w - splitPos - m, r.h)
+      drawAreaRecursive(area.areas[0], r1)
+      drawAreaRecursive(area.areas[1], r2)
+
+  elif area.panels.len > 0:
+    if area.selectedPanelNum > area.panels.len - 1:
+      area.selectedPanelNum = area.panels.len - 1
+
+    # Draw Header
+    let headerRect = rect(r.x, r.y, r.w, AreaHeaderHeight)
+    sk.draw9Patch("panel.header.9patch", 3, headerRect.xy, headerRect.wh)
+
+    # Draw Tabs
+    var x = r.x + 4
+    sk.pushClipRect(rect(r.x, r.y, r.w - 2, AreaHeaderHeight))
+
+    for i, panel in area.panels:
+      let textSize = sk.getTextSize("Default", panel.name)
+      let tabW = textSize.x + 16
+      let tabRect = rect(x, r.y + 4, tabW, AreaHeaderHeight - 4)
+
+      let isSelected = i == area.selectedPanelNum
+      let isHovered = window.mousePos.vec2.overlaps(tabRect)
+
+      if isHovered:
+        if window.buttonPressed[MouseLeft]:
+          area.selectedPanelNum = i
+          maybeDragStartPos = window.mousePos.vec2
+          maybeDragPanel = panel
+        elif window.buttonDown[MouseLeft] and dragPanel == panel:
+          discard
+
+      if window.buttonDown[MouseLeft]:
+        if maybeDragPanel != nil and (maybeDragStartPos - window.mousePos.vec2).length() > 10:
+          dragPanel = maybeDragPanel
+          maybeDragStartPos = vec2(0, 0)
+          maybeDragPanel = nil
+      else:
+        maybeDragStartPos = vec2(0, 0)
+        maybeDragPanel = nil
+
+      if isSelected:
+        sk.draw9Patch("panel.tab.selected.9patch", 3, tabRect.xy, tabRect.wh, rgbx(255, 255, 255, 255))
+      elif isHovered:
+        sk.draw9Patch("panel.tab.hover.9patch", 3, tabRect.xy, tabRect.wh, rgbx(255, 255, 255, 255))
+      else:
+        sk.draw9Patch("panel.tab.9patch", 3, tabRect.xy, tabRect.wh)
+
+      discard sk.drawText("Default", panel.name, vec2(x + 8, r.y + 4 + 4), rgbx(255, 255, 255, 255))
+      x += tabW + 2
+
+    sk.popClipRect()
+
+    # Draw Content
+    let contentRect = rect(r.x + 4, r.y + AreaHeaderHeight + 4, r.w - 8, r.h - AreaHeaderHeight - 8)
+    sk.draw9Patch("panel.body.9patch", 3, contentRect.xy - vec2(2, 2), contentRect.wh + vec2(4, 4))
+
+    let activePanel = area.panels[area.selectedPanelNum]
+    drawPanelContent(activePanel, contentRect)
+
+# =============================================================================
+# Initialization
+# =============================================================================
+
+proc initRootArea() =
+  rootArea = Area()
+  rootArea.split(Vertical)
+  rootArea.split = 0.60
+
+  # Left side: Source Code
+  rootArea.areas[0].addPanel("Source Code", pkSourceCode)
+
+  # Right side: Stack, Output, Variables
+  rootArea.areas[1].split(Horizontal)
+  rootArea.areas[1].split = 0.33
+
+  rootArea.areas[1].areas[0].addPanel("Stack Trace", pkStackTrace)
+
+  rootArea.areas[1].areas[1].split(Horizontal)
+  rootArea.areas[1].areas[1].split = 0.5
+
+  rootArea.areas[1].areas[1].areas[0].addPanel("Output", pkOutput)
+  rootArea.areas[1].areas[1].areas[1].addPanel("Variables", pkVariables)
+
+# =============================================================================
+# Main
+# =============================================================================
+
+proc main() =
+  # Parse command-line arguments
+  if paramCount() < 1:
+    echo "Usage: visualizer <script.nimmy>"
+    echo ""
+    echo "A visual step-by-step debugger for Nimmy scripts."
+    echo "Press Space or Enter to step through the code."
+    quit(0)
+
+  let scriptPath = paramStr(1)
+
+  initRootArea()
+  initDebugger(scriptPath)
+
+  # Main Loop
+  window.onFrame = proc() =
+    sk.beginUI(window, window.size)
+
+    # Background
+    sk.drawRect(vec2(0, 0), window.size.vec2, BackgroundColor)
+
+    # Reset cursor
+    sk.cursor = Cursor(kind: ArrowCursor)
+
+    # Handle keyboard input
+    if window.buttonPressed[KeySpace] or window.buttonPressed[KeyEnter]:
+      stepDebugger()
+
+    # Handle R to restart
+    if window.buttonPressed[KeyR]:
+      initDebugger(scriptPath)
+
+    # Update Dragging Split
+    if dragArea != nil:
+      if not window.buttonDown[MouseLeft]:
+        dragArea = nil
+      else:
+        if dragArea.layout == Horizontal:
+          sk.cursor = Cursor(kind: ResizeUpDownCursor)
+          dragArea.split = (window.mousePos.vec2.y - dragArea.rect.y) / dragArea.rect.h
+        else:
+          sk.cursor = Cursor(kind: ResizeLeftRightCursor)
+          dragArea.split = (window.mousePos.vec2.x - dragArea.rect.x) / dragArea.rect.w
+        dragArea.split = clamp(dragArea.split, 0.1, 0.9)
+
+    # Update Dragging Panel
+    showDropHighlight = false
+    if dragPanel != nil:
+      if not window.buttonDown[MouseLeft]:
+        let (targetArea, areaScan, _) = rootArea.scan()
+        if targetArea != nil:
+          case areaScan:
+            of Header:
+              let (idx, _) = targetArea.getTabInsertInfo(window.mousePos.vec2)
+              targetArea.insertPanel(dragPanel, idx)
+            of Body:
+              targetArea.movePanel(dragPanel)
+            of North:
+              targetArea.split(Horizontal)
+              targetArea.areas[0].movePanel(dragPanel)
+              targetArea.areas[1].movePanels(targetArea.panels)
+            of South:
+              targetArea.split(Horizontal)
+              targetArea.areas[1].movePanel(dragPanel)
+              targetArea.areas[0].movePanels(targetArea.panels)
+            of East:
+              targetArea.split(Vertical)
+              targetArea.areas[1].movePanel(dragPanel)
+              targetArea.areas[0].movePanels(targetArea.panels)
+            of West:
+              targetArea.split(Vertical)
+              targetArea.areas[0].movePanel(dragPanel)
+              targetArea.areas[1].movePanels(targetArea.panels)
+
+          rootArea.removeBlankAreas()
+        dragPanel = nil
+      else:
+        let (targetArea, areaScan, rect) = rootArea.scan()
+        dropHighlight = rect
+        showDropHighlight = true
+
+        if targetArea != nil and areaScan == Header:
+          let (_, highlightRect) = targetArea.getTabInsertInfo(window.mousePos.vec2)
+          dropHighlight = highlightRect
+
+    # Draw Areas
+    drawAreaRecursive(rootArea, rect(0, 1, window.size.x.float32, window.size.y.float32))
+
+    # Draw Drop Highlight
+    if showDropHighlight and dragPanel != nil:
+      sk.drawRect(dropHighlight.xy, dropHighlight.wh, rgbx(255, 255, 0, 100))
+
+      let label = dragPanel.name
+      let textSize = sk.getTextSize("Default", label)
+      let size = textSize + vec2(16, 8)
+      sk.draw9Patch("tooltip.9patch", 4, window.mousePos.vec2 + vec2(10, 10), size, rgbx(255, 255, 255, 200))
+      discard sk.drawText("Default", label, window.mousePos.vec2 + vec2(18, 14), rgbx(255, 255, 255, 255))
+
+    # Draw status bar
+    let statusY = window.size.y.float32 - 24
+    sk.drawRect(vec2(0, statusY), vec2(window.size.x.float32, 24), rgbx(40, 42, 54, 255))
+
+    let statusText = if debugState != nil:
+      if debugState.finished:
+        "Finished | Press R to restart"
+      else:
+        fmt"Line {debugState.currentLine} | Press Space/Enter to step, R to restart"
+    else:
+      "No script loaded"
+
+    discard sk.drawText("Default", statusText, vec2(10, statusY + 4), rgbx(200, 200, 200, 255))
+
+    sk.endUi()
+    window.swapBuffers()
+
+    if window.cursor.kind != sk.cursor.kind:
+      window.cursor = sk.cursor
+
+  while not window.closeRequested:
+    pollEvents()
+
+main()
