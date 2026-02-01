@@ -269,12 +269,10 @@ const
   BreakpointLineColor = parseHtmlColor("#442222").rgbx
   LineNumberColor = parseHtmlColor("#6272a4").rgbx
   CodeColor = parseHtmlColor("#f8f8f2").rgbx
-  HeaderTextColor = rgbx(200, 200, 200, 255)
   DimTextColor = rgbx(128, 128, 128, 255)
   SuccessColor = rgbx(100, 200, 100, 255)
   ButtonColor = parseHtmlColor("#44475a").rgbx
   ButtonHoverColor = parseHtmlColor("#6272a4").rgbx
-  ButtonActiveColor = parseHtmlColor("#50fa7b").rgbx
 
 # =============================================================================
 # Panel System Globals
@@ -595,98 +593,41 @@ proc drawControlsContent() =
     return
 
   let baseX = sk.at.x
-  let baseY = sk.at.y
-  let btnW = 80.0'f32
-  let btnH = 28.0'f32
-  let spacing = 8.0'f32
+  let btnW = 70.0'f32
+  let btnH = 26.0'f32
+  let spacing = 6.0'f32
   let notFinished = not debugState.finished
 
-  # Row 1: Step controls
-  discard sk.drawText("Default", "Execution:", vec2(baseX, baseY), HeaderTextColor)
-  sk.advance(vec2(100, 24))
-
+  # Row 1: Execution controls
   var x = baseX
   var y = sk.at.y
 
-  # Continue button
   if drawButton("Continue", x, y, btnW, btnH, notFinished):
     continueDebugger()
   x += btnW + spacing
 
-  # Step button
-  if drawButton("Step", x, y, btnW, btnH, notFinished):
+  if drawButton("Step", x, y, 50, btnH, notFinished):
     stepDebugger()
-  x += btnW + spacing
+  x += 50 + spacing
 
-  # Step Into button
-  if drawButton("Step Into", x, y, btnW, btnH, notFinished):
+  if drawButton("Into", x, y, 45, btnH, notFinished):
     stepIntoDebugger()
-  x += btnW + spacing
+  x += 45 + spacing
 
-  # Step Out button
-  if drawButton("Step Out", x, y, btnW, btnH, notFinished):
+  if drawButton("Out", x, y, 40, btnH, notFinished):
     stepOutDebugger()
+  x += 40 + spacing
 
-  sk.advance(vec2(sk.size.x - 32, btnH + spacing))
-
-  # Row 2: Other controls
-  x = baseX
-  y = sk.at.y
-
-  # Restart button
-  if drawButton("Restart", x, y, btnW, btnH):
+  if drawButton("Restart", x, y, 60, btnH):
     initDebugger(debugState.scriptPath)
 
-  sk.advance(vec2(sk.size.x - 32, btnH + spacing * 2))
-
-  # Status info
-  let statusY = sk.at.y
-  let statusStr = case debugState.stepMode
-    of smPaused: "Paused"
-    of smStep: "Stepping"
-    of smStepInto: "Stepping Into"
-    of smStepOut: "Stepping Out"
-    of smContinue: "Running"
-
-  let statusColor = if debugState.finished:
-    SuccessColor
-  elif debugState.stepMode == smPaused:
-    rgbx(255, 200, 100, 255)
-  else:
-    rgbx(100, 200, 255, 255)
-
-  let displayStatus = if debugState.finished: "Finished" else: statusStr
-  discard sk.drawText("Default", "Status: " & displayStatus, vec2(baseX, statusY), statusColor)
-  sk.advance(vec2(200, 20))
-
-  # Breakpoint info
-  let bpCount = debugState.breakpoints.len
-  let bpText = if bpCount == 0:
-    "No breakpoints set"
-  elif bpCount == 1:
-    "1 breakpoint"
-  else:
-    $bpCount & " breakpoints"
-
-  discard sk.drawText("Default", bpText, vec2(baseX, sk.at.y), DimTextColor)
-  sk.advance(vec2(200, 20))
-
-  # Help text
-  sk.advance(vec2(0, 8))
-  discard sk.drawText("Code", "Click line numbers to toggle breakpoints", vec2(baseX, sk.at.y), DimTextColor)
-  sk.advance(vec2(300, LineHeight))
-
-  discard sk.drawText("Code", "Keyboard: Space/Enter=Step, C=Continue, R=Restart", vec2(baseX, sk.at.y), DimTextColor)
-  sk.advance(vec2(400, LineHeight))
+  sk.advance(vec2(sk.size.x - 32, btnH + spacing))
 
 proc drawStackTraceContent() =
   ## Draw stack trace content - call inside a frame template.
   if debugState == nil:
     text "(no script loaded)"
     return
-
-  discard sk.drawText("Default", "Call Stack:", sk.at, HeaderTextColor)
-  sk.advance(vec2(100, 20))
 
   for i, frm in debugState.callStack:
     let indent = "  ".repeat(i)
@@ -704,9 +645,6 @@ proc drawOutputContent() =
     text "(no script loaded)"
     return
 
-  discard sk.drawText("Default", "Console:", sk.at, HeaderTextColor)
-  sk.advance(vec2(80, 20))
-
   if debugState.outputLines.len == 0:
     discard sk.drawText("Code", "(no output)", sk.at, DimTextColor)
     sk.advance(vec2(100, LineHeight))
@@ -720,9 +658,6 @@ proc drawVariablesContent() =
   if debugState == nil:
     text "(no script loaded)"
     return
-
-  discard sk.drawText("Default", "Variables:", sk.at, HeaderTextColor)
-  sk.advance(vec2(100, 20))
 
   var hasVars = false
   var scope = debugState.vm.currentScope
@@ -871,12 +806,12 @@ proc initRootArea() =
 
   # Right column: Controls (top) + Variables (middle) + Stack Trace (bottom)
   rootArea.areas[1].split(Horizontal)
-  rootArea.areas[1].split = 0.35
+  rootArea.areas[1].split = 0.12
   rootArea.areas[1].areas[0].addPanel("Controls", pkControls)
 
   # Variables + Stack below Controls
   rootArea.areas[1].areas[1].split(Horizontal)
-  rootArea.areas[1].areas[1].split = 0.60
+  rootArea.areas[1].areas[1].split = 0.65
   rootArea.areas[1].areas[1].areas[0].addPanel("Variables", pkVariables)
   rootArea.areas[1].areas[1].areas[1].addPanel("Stack Trace", pkStackTrace)
 
