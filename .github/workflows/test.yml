@@ -7,4 +7,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: treeform/setup-nim-action@v6
-      - run: nim r tests/tests_all.nim
+      - run: nim r tests/test_all.nim
