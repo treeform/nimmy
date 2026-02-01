@@ -51,6 +51,7 @@ type
     tkGe,           # >=
     tkDotDot,       # ..
     tkDotDotLt,     # ..<
+    tkDollar,       # $
 
     # Delimiters
     tkLParen,       # (

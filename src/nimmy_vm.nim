@@ -183,11 +183,13 @@ proc evalUnaryOp(vm: VM, node: Node): Value =
       return intValue(-operand.intVal)
     if operand.kind == vkFloat:
       return floatValue(-operand.floatVal)
-    vm.error(fmt"Cannot negate {typeName(operand)}", node.line, node.col)
+    vm.error("Cannot negate " & typeName(operand), node.line, node.col)
   of "not":
     return boolValue(not isTruthy(operand))
+  of "$":
+    return stringValue($operand)
   else:
-    vm.error(fmt"Unknown unary operator '{node.unOp}'", node.line, node.col)
+    vm.error("Unknown unary operator '" & node.unOp & "'", node.line, node.col)
 
 proc evalCall(vm: VM, node: Node): Value =
   var callee: Value

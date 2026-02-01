@@ -4,10 +4,10 @@
 echo "hello".len
 echo [1, 2, 3].len
 
-# str (UFCS style)
-echo 42.str
-echo 3.14.str
-echo true.str
+# $ operator for string conversion
+echo $42
+echo $3.14
+echo $true
 
 # int and float (UFCS style)
 echo 3.7.int

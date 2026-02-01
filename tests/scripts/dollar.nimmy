@@ -1,0 +1,45 @@
+# Test $ operator for string conversion
+# In Nim, $ is a prefix operator that converts values to strings
+
+# Basic types
+echo $42
+echo $3.14
+echo $true
+echo $false
+echo $nil
+
+# Negative numbers ($ has higher precedence than -)
+echo $(-5)
+echo $(-3.14)
+
+# Arrays
+echo $[1, 2, 3]
+echo $["a", "b", "c"]
+
+# Tables
+echo ${"key": "value"}
+
+# Sets
+echo ${1, 2, 3}
+
+# Nested structures
+echo $[[1, 2], [3, 4]]
+
+# String concatenation with $
+let x = 42
+let y = 3.14
+echo "x = " & $x
+echo "y = " & $y
+echo "sum = " & $(x + 10)
+
+# Using $ in expressions
+let msg = "The answer is " & $42
+echo msg
+
+# $ with variables
+let num = 100
+let str = $num
+echo str
+
+# Chained with other operations
+echo "Values: " & $1 & ", " & $2 & ", " & $3

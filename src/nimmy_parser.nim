@@ -184,6 +184,9 @@ proc unary(P: Parser): Node =
   if P.match(tkNot):
     return Node(kind: nkUnaryOp, line: line, col: col, unOp: "not", unOperand: P.unary())
   
+  if P.match(tkDollar):
+    return Node(kind: nkUnaryOp, line: line, col: col, unOp: "$", unOperand: P.unary())
+  
   return P.postfix()
 
 # Range expression

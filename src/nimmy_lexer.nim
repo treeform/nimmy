@@ -244,6 +244,7 @@ proc nextToken*(L: Lexer): Token =
   of '/': return L.makeToken(tkSlash, "/", startLine, startCol)
   of '%': return L.makeToken(tkPercent, "%", startLine, startCol)
   of '&': return L.makeToken(tkAmp, "&", startLine, startCol)
+  of '$': return L.makeToken(tkDollar, "$", startLine, startCol)
   
   of '=':
     if L.match('='):

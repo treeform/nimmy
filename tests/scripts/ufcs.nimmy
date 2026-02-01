@@ -55,9 +55,9 @@ var numbers = [10, 20]
 numbers.add(30)
 echo numbers
 
-# 8. UFCS with type conversion
-echo 42.str()
-echo true.str()
+# 8. $ operator for string conversion (like Nim)
+echo $42
+echo $true
 
 # 9. echo with multiple comma-separated args
 echo "test1"
