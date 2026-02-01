@@ -1,0 +1,64 @@
+# Test set operations
+
+# Create sets
+let a = {1, 2, 3}
+let b = {2, 3, 4}
+let c = {1, 2, 3}
+
+# Display sets
+echo a
+echo b
+
+# Cardinality
+echo card(a)
+echo card(b)
+
+# Empty set
+let empty = {}
+echo card(empty)
+
+# Contains / in operator
+echo 2 in a
+echo 5 in a
+echo contains(a, 3)
+echo contains(a, 10)
+
+# Set union (+)
+let unionSet = a + b
+echo card(unionSet)
+echo 1 in unionSet
+echo 4 in unionSet
+
+# Set intersection (*)
+let intersectSet = a * b
+echo card(intersectSet)
+echo 2 in intersectSet
+echo 1 in intersectSet
+
+# Set difference (-)
+let diffSet = a - b
+echo card(diffSet)
+echo 1 in diffSet
+echo 2 in diffSet
+
+# Modify set with incl/excl
+var s = {10, 20}
+incl(s, 30)
+echo card(s)
+echo 30 in s
+
+excl(s, 20)
+echo card(s)
+echo 20 in s
+
+# Duplicate handling (sets should dedupe)
+let dupes = {1, 1, 2, 2, 3}
+echo card(dupes)
+
+# Set equality
+echo a == c
+echo a == b
+
+# Mixed types in set
+let mixed = {1, 2, 3}
+echo 2 in mixed

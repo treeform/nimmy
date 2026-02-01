@@ -166,6 +166,69 @@ proc newNimmyVM*(): NimmyVM =
     if compare(args[0], args[1]) >= 0:
       return args[0]
     return args[1]
+  
+  # contains(collection, elem) - check if element is in collection
+  vm.addProc("contains") do (args: seq[Value]) -> Value:
+    if args.len != 2:
+      raise newException(RuntimeError, "contains() takes exactly 2 arguments")
+    case args[0].kind
+    of vkSet:
+      boolValue(setContains(args[0], args[1]))
+    of vkArray:
+      for elem in args[0].arrayVal:
+        if equals(elem, args[1]):
+          return boolValue(true)
+      boolValue(false)
+    of vkTable:
+      if args[1].kind != vkString:
+        raise newException(RuntimeError, "Table key must be a string")
+      boolValue(args[0].tableVal.hasKey(args[1].strVal))
+    else:
+      raise newException(RuntimeError, "First argument to contains() must be a set, array, or table")
+  
+  # incl(set, elem) - add element to set
+  vm.addProc("incl") do (args: seq[Value]) -> Value:
+    if args.len != 2:
+      raise newException(RuntimeError, "incl() takes exactly 2 arguments")
+    if args[0].kind != vkSet:
+      raise newException(RuntimeError, "First argument to incl() must be a set")
+    for existing in args[0].setVal:
+      if equals(existing, args[1]):
+        return args[0]
+    args[0].setVal.add(args[1])
+    args[0]
+  
+  # excl(set, elem) - remove element from set
+  vm.addProc("excl") do (args: seq[Value]) -> Value:
+    if args.len != 2:
+      raise newException(RuntimeError, "excl() takes exactly 2 arguments")
+    if args[0].kind != vkSet:
+      raise newException(RuntimeError, "First argument to excl() must be a set")
+    var newSet: seq[Value] = @[]
+    for existing in args[0].setVal:
+      if not equals(existing, args[1]):
+        newSet.add(existing)
+    args[0].setVal = newSet
+    args[0]
+  
+  # card(set) - cardinality (length) of set
+  vm.addProc("card") do (args: seq[Value]) -> Value:
+    if args.len != 1:
+      raise newException(RuntimeError, "card() takes exactly 1 argument")
+    if args[0].kind != vkSet:
+      raise newException(RuntimeError, "Argument to card() must be a set")
+    intValue(args[0].setVal.len)
+  
+  # del(table, key) - delete key from table
+  vm.addProc("del") do (args: seq[Value]) -> Value:
+    if args.len != 2:
+      raise newException(RuntimeError, "del() takes exactly 2 arguments")
+    if args[0].kind != vkTable:
+      raise newException(RuntimeError, "First argument to del() must be a table")
+    if args[1].kind != vkString:
+      raise newException(RuntimeError, "Second argument to del() must be a string")
+    args[0].tableVal.del(args[1].strVal)
+    args[0]
 
 # Run a script and return the output
 proc run*(nvm: NimmyVM, source: string): string =

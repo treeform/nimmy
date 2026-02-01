@@ -81,7 +81,7 @@ proc formatLocals*(d: Debugger): string =
   var lines: seq[string] = @[]
   lines.add("Local variables:")
   for (name, value) in d.getCurrentLocals():
-    lines.add(fmt"  {name} = {repr(value)}")
+    lines.add(fmt"  {name} = {valueRepr(value)}")
   if lines.len == 1:
     lines.add("  (none)")
   result = lines.join("\n")
@@ -91,7 +91,7 @@ proc formatAllVars*(d: Debugger): string =
   var lines: seq[string] = @[]
   lines.add("All variables:")
   for (name, value) in d.getLocals():
-    lines.add(fmt"  {name} = {repr(value)}")
+    lines.add(fmt"  {name} = {valueRepr(value)}")
   if lines.len == 1:
     lines.add("  (none)")
   result = lines.join("\n")
@@ -116,22 +116,22 @@ proc inspect*(d: Debugger, name: string): string =
     var lines: seq[string] = @[]
     lines.add(fmt"{name}: {value.objType}")
     for fieldName, fieldVal in value.objFields:
-      lines.add(fmt"  .{fieldName} = {repr(fieldVal)}")
+      lines.add(fmt"  .{fieldName} = {valueRepr(fieldVal)}")
     return lines.join("\n")
   of vkArray:
     var lines: seq[string] = @[]
     lines.add(fmt"{name}: array[{value.arrayVal.len}]")
     for i, elem in value.arrayVal:
-      lines.add(fmt"  [{i}] = {repr(elem)}")
+      lines.add(fmt"  [{i}] = {valueRepr(elem)}")
     return lines.join("\n")
   of vkTable:
     var lines: seq[string] = @[]
     lines.add(fmt"{name}: table[{value.tableVal.len}]")
     for key, val in value.tableVal:
-      lines.add("  [\"" & key & "\"] = " & repr(val))
+      lines.add("  [\"" & key & "\"] = " & valueRepr(val))
     return lines.join("\n")
   else:
-    return fmt"{name} = {repr(value)}"
+    return fmt"{name} = {valueRepr(value)}"
 
 # Debug state summary
 proc status*(d: Debugger): string =

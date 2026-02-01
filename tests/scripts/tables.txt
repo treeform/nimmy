@@ -1,0 +1,14 @@
+Alice
+30
+95
+true
+false
+true
+false
+3
+3
+false
+2
+0
+true
+false

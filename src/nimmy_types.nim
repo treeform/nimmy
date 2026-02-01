@@ -110,6 +110,7 @@ type
     nkProgram,
     nkArray,
     nkTable,
+    nkSet,
     nkRange
 
   Node* = ref object
@@ -190,6 +191,8 @@ type
     of nkTable:
       tableKeys*: seq[Node]
       tableVals*: seq[Node]
+    of nkSet:
+      setElems*: seq[Node]
     of nkRange:
       rangeStart*: Node
       rangeEnd*: Node
@@ -206,6 +209,7 @@ type
     vkString,
     vkArray,
     vkTable,
+    vkSet,
     vkObject,
     vkProc,
     vkNativeProc,
@@ -230,6 +234,8 @@ type
       arrayVal*: seq[Value]
     of vkTable:
       tableVal*: TableRef[string, Value]
+    of vkSet:
+      setVal*: seq[Value]
     of vkObject:
       objType*: string
       objFields*: TableRef[string, Value]
@@ -291,6 +297,9 @@ proc arrayValue*(arr: seq[Value]): Value =
 
 proc tableValue*(): Value =
   Value(kind: vkTable, tableVal: newTable[string, Value]())
+
+proc setValue*(elems: seq[Value]): Value =
+  Value(kind: vkSet, setVal: elems)
 
 proc objectValue*(typeName: string): Value =
   Value(kind: vkObject, objType: typeName, objFields: newTable[string, Value]())

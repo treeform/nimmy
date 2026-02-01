@@ -1,0 +1,40 @@
+# Test table operations
+
+# Create a table
+let person = {"name": "Alice", "age": "30"}
+echo person["name"]
+echo person["age"]
+
+# Modify table
+var scores = {"math": "90", "english": "85"}
+scores["science"] = "95"
+echo scores["science"]
+
+# Check if key exists
+echo hasKey(scores, "math")
+echo hasKey(scores, "history")
+
+# Using in operator for key check
+echo "math" in scores
+echo "history" in scores
+
+# Get keys and values
+let k = keys(scores)
+echo len(k)
+
+let v = values(scores)
+echo len(v)
+
+# Delete a key
+del(scores, "english")
+echo hasKey(scores, "english")
+echo len(keys(scores))
+
+# Empty table
+let empty = {"temp": "x"}
+del(empty, "temp")
+echo len(keys(empty))
+
+# Contains function
+echo contains(scores, "math")
+echo contains(scores, "history")

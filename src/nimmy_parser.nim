@@ -98,23 +98,30 @@ proc primary(P: Parser): Node =
     return Node(kind: nkArray, line: line, col: col, arrayElems: elems)
   
   if P.match(tkLBrace):
-    # Table literal
-    var keys: seq[Node] = @[]
-    var vals: seq[Node] = @[]
-    if not P.check(tkRBrace):
-      let key = P.expression()
-      discard P.consume(tkColon, "Expected ':' after table key")
-      let val = P.expression()
-      keys.add(key)
-      vals.add(val)
+    # Could be a table {key: val} or a set {val, val}
+    if P.check(tkRBrace):
+      # Empty set {}
+      discard P.advance()
+      return Node(kind: nkSet, line: line, col: col, setElems: @[])
+    let firstExpr = P.expression()
+    if P.check(tkColon):
+      # It's a table {key: val, ...}
+      discard P.advance()
+      var keys = @[firstExpr]
+      var vals = @[P.expression()]
       while P.match(tkComma):
-        let key2 = P.expression()
+        keys.add(P.expression())
         discard P.consume(tkColon, "Expected ':' after table key")
-        let val2 = P.expression()
-        keys.add(key2)
-        vals.add(val2)
-    discard P.consume(tkRBrace, "Expected '}' after table entries")
-    return Node(kind: nkTable, line: line, col: col, tableKeys: keys, tableVals: vals)
+        vals.add(P.expression())
+      discard P.consume(tkRBrace, "Expected '}' after table entries")
+      return Node(kind: nkTable, line: line, col: col, tableKeys: keys, tableVals: vals)
+    else:
+      # It's a set {val, val, ...}
+      var elems = @[firstExpr]
+      while P.match(tkComma):
+        elems.add(P.expression())
+      discard P.consume(tkRBrace, "Expected '}' after set elements")
+      return Node(kind: nkSet, line: line, col: col, setElems: elems)
   
   P.error(fmt"Expected expression, got {P.current.kind}")
 
@@ -201,7 +208,7 @@ proc term(P: Parser): Node =
 proc comparison(P: Parser): Node =
   result = P.term()
   
-  while P.checkAny({tkLt, tkLe, tkGt, tkGe}):
+  while P.checkAny({tkLt, tkLe, tkGt, tkGe, tkIn}):
     let line = P.current.line
     let col = P.current.col
     let op = P.advance().lexeme

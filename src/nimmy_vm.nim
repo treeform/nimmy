@@ -69,21 +69,54 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
       return intValue(left.intVal + right.intVal)
     if left.kind in {vkInt, vkFloat} and right.kind in {vkInt, vkFloat}:
       return floatValue(toFloat(left) + toFloat(right))
-    vm.error(fmt"Cannot add {typeName(left)} and {typeName(right)}", node.line, node.col)
+    if left.kind == vkSet and right.kind == vkSet:
+      # Set union
+      var unionSet = left.setVal
+      for elem in right.setVal:
+        var found = false
+        for existing in unionSet:
+          if equals(existing, elem):
+            found = true
+            break
+        if not found:
+          unionSet.add(elem)
+      return setValue(unionSet)
+    vm.error("Cannot add " & typeName(left) & " and " & typeName(right), node.line, node.col)
   
   of "-":
     if left.kind == vkInt and right.kind == vkInt:
       return intValue(left.intVal - right.intVal)
     if left.kind in {vkInt, vkFloat} and right.kind in {vkInt, vkFloat}:
       return floatValue(toFloat(left) - toFloat(right))
-    vm.error(fmt"Cannot subtract {typeName(right)} from {typeName(left)}", node.line, node.col)
+    if left.kind == vkSet and right.kind == vkSet:
+      # Set difference
+      var diffSet: seq[Value] = @[]
+      for elem in left.setVal:
+        var found = false
+        for other in right.setVal:
+          if equals(elem, other):
+            found = true
+            break
+        if not found:
+          diffSet.add(elem)
+      return setValue(diffSet)
+    vm.error("Cannot subtract " & typeName(right) & " from " & typeName(left), node.line, node.col)
   
   of "*":
     if left.kind == vkInt and right.kind == vkInt:
       return intValue(left.intVal * right.intVal)
     if left.kind in {vkInt, vkFloat} and right.kind in {vkInt, vkFloat}:
       return floatValue(toFloat(left) * toFloat(right))
-    vm.error(fmt"Cannot multiply {typeName(left)} and {typeName(right)}", node.line, node.col)
+    if left.kind == vkSet and right.kind == vkSet:
+      # Set intersection
+      var interSet: seq[Value] = @[]
+      for elem in left.setVal:
+        for other in right.setVal:
+          if equals(elem, other):
+            interSet.add(elem)
+            break
+      return setValue(interSet)
+    vm.error("Cannot multiply " & typeName(left) & " and " & typeName(right), node.line, node.col)
   
   of "/":
     if left.kind in {vkInt, vkFloat} and right.kind in {vkInt, vkFloat}:
@@ -121,9 +154,25 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
   
   of ">=":
     return boolValue(compare(left, right) >= 0)
-  
+  of "in":
+    if right.kind == vkSet:
+      return boolValue(setContains(right, left))
+    if right.kind == vkArray:
+      for elem in right.arrayVal:
+        if equals(elem, left):
+          return boolValue(true)
+      return boolValue(false)
+    if right.kind == vkTable:
+      if left.kind != vkString:
+        vm.error("Table key must be a string", node.line, node.col)
+      return boolValue(right.tableVal.hasKey(left.strVal))
+    if right.kind == vkString:
+      if left.kind != vkString:
+        vm.error("Can only check string containment in string", node.line, node.col)
+      return boolValue(left.strVal in right.strVal)
+    vm.error("Cannot use 'in' with " & typeName(right), node.line, node.col)
   else:
-    vm.error(fmt"Unknown operator '{node.binOp}'", node.line, node.col)
+    vm.error("Unknown operator '" & node.binOp & "'", node.line, node.col)
 
 proc evalUnaryOp(vm: VM, node: Node): Value =
   let operand = vm.eval(node.unOperand)
@@ -498,7 +547,19 @@ proc eval*(vm: VM, node: Node): Value =
       if key.kind != vkString:
         vm.error("Table key must be a string", node.line, node.col)
       result.tableVal[key.strVal] = val
-  
+  of nkSet:
+    var elems: seq[Value] = @[]
+    for elem in node.setElems:
+      let val = vm.eval(elem)
+      # Only add if not already in set
+      var found = false
+      for existing in elems:
+        if equals(existing, val):
+          found = true
+          break
+      if not found:
+        elems.add(val)
+    result = setValue(elems)
   of nkRange:
     let startVal = vm.eval(node.rangeStart)
     let endVal = vm.eval(node.rangeEnd)

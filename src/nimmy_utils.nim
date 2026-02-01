@@ -4,6 +4,9 @@
 import nimmy_types
 import std/[strformat, strutils, tables]
 
+# Forward declaration
+proc valueRepr*(v: Value): string
+
 # Convert Value to string for display
 proc `$`*(v: Value): string =
   if v.isNil:
@@ -22,17 +25,22 @@ proc `$`*(v: Value): string =
   of vkArray:
     var parts: seq[string]
     for elem in v.arrayVal:
-      parts.add(repr(elem))
+      parts.add(valueRepr(elem))
     result = "[" & parts.join(", ") & "]"
   of vkTable:
     var parts: seq[string]
     for k, val in v.tableVal:
-      parts.add(fmt"{k}: {repr(val)}")
+      parts.add(fmt"{k}: {valueRepr(val)}")
+    result = "{" & parts.join(", ") & "}"
+  of vkSet:
+    var parts: seq[string]
+    for elem in v.setVal:
+      parts.add(valueRepr(elem))
     result = "{" & parts.join(", ") & "}"
   of vkObject:
     var parts: seq[string]
     for k, val in v.objFields:
-      parts.add(fmt"{k}: {repr(val)}")
+      parts.add(fmt"{k}: {valueRepr(val)}")
     result = fmt"{v.objType}(" & parts.join(", ") & ")"
   of vkProc:
     result = fmt"<proc {v.procName}>"
@@ -46,15 +54,15 @@ proc `$`*(v: Value): string =
     else:
       result = fmt"{v.rangeStart}..<{v.rangeEnd}"
 
-# Repr for debugging (shows quotes around strings)
-proc repr*(v: Value): string =
+# Debug representation (shows quotes around strings)
+proc valueRepr*(v: Value): string =
   if v.isNil:
     return "nil"
   case v.kind
   of vkString:
-    result = "\"" & v.strVal & "\""
+    "\"" & v.strVal & "\""
   else:
-    result = $v
+    $v
 
 # Truthiness check
 proc isTruthy*(v: Value): bool =
@@ -75,6 +83,8 @@ proc isTruthy*(v: Value): bool =
     result = v.arrayVal.len > 0
   of vkTable:
     result = v.tableVal.len > 0
+  of vkSet:
+    result = v.setVal.len > 0
   of vkObject:
     result = true
   of vkProc, vkNativeProc, vkType:
@@ -111,6 +121,19 @@ proc equals*(a, b: Value): bool =
       return false
     for i in 0..<a.arrayVal.len:
       if not equals(a.arrayVal[i], b.arrayVal[i]):
+        return false
+    result = true
+  of vkSet:
+    if a.setVal.len != b.setVal.len:
+      return false
+    # Check that all elements in a are in b
+    for elem in a.setVal:
+      var found = false
+      for other in b.setVal:
+        if equals(elem, other):
+          found = true
+          break
+      if not found:
         return false
     result = true
   else:
@@ -164,6 +187,7 @@ proc typeName*(v: Value): string =
   of vkString: "string"
   of vkArray: "array"
   of vkTable: "table"
+  of vkSet: "set"
   of vkObject: v.objType
   of vkProc: "proc"
   of vkNativeProc: "native proc"
@@ -196,6 +220,13 @@ proc `$`*(n: Node): string =
 # Token to string for debugging
 proc `$`*(t: Token): string =
   result = "Token(" & $t.kind & ", \"" & t.lexeme & "\", " & $t.line & ":" & $t.col & ")"
+
+# Check if a value is in a set
+proc setContains*(s: Value, elem: Value): bool =
+  for v in s.setVal:
+    if equals(v, elem):
+      return true
+  false
 
 # Error formatting
 proc formatError*(msg: string, line, col: int, source: string = ""): string =

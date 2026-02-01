@@ -1,0 +1,26 @@
+{1, 2, 3}
+{2, 3, 4}
+3
+3
+0
+true
+false
+true
+false
+4
+true
+true
+2
+true
+false
+1
+true
+false
+3
+true
+2
+false
+3
+true
+false
+true
