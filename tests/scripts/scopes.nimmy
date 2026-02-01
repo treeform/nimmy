@@ -79,7 +79,7 @@ proc makeClosures() =
     let captured = i
     proc f() =
       return captured
-    push(funcs, f)
+    funcs.add(f)
   return funcs
 
 let closures = makeClosures()

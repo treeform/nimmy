@@ -9,7 +9,7 @@
 proc double(x) =
   return x * 2
 
-proc add(a, b) =
+proc sum(a, b) =
   return a + b
 
 proc greet(name) =
@@ -20,7 +20,7 @@ proc triple(x) =
 
 # 1. Standard function call syntax: func(args)
 echo double(5)
-echo add(3, 4)
+echo sum(3, 4)
 echo greet("World")
 
 # 2. Command syntax (no parentheses): func arg
@@ -28,11 +28,11 @@ echo double 10
 echo greet "Nim"
 
 # Command syntax with multiple args
-echo (add 5, 6)
+echo (sum 5, 6)
 
 # 3. UFCS method-style syntax: a.func(b) -> func(a, b)
 echo 7.double()
-echo 8.add(2)
+echo 8.sum(2)
 echo "Alice".greet()
 
 # 4. UFCS chaining
@@ -52,7 +52,7 @@ echo 5.double.triple
 
 # 7. UFCS with mutating functions
 var numbers = [10, 20]
-numbers.push(30)
+numbers.add(30)
 echo numbers
 
 # 8. UFCS with type conversion

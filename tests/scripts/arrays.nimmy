@@ -2,8 +2,8 @@
 let numbers = [1, 2, 3, 4, 5]
 let names = ["Alice", "Bob", "Charlie"]
 
-echo len(numbers)
-echo len(names)
+echo numbers.len
+echo names.len
 
 # Array indexing
 echo numbers[0]
@@ -20,10 +20,10 @@ var items = [10, 20, 30]
 items[1] = 25
 echo items[1]
 
-# Push and pop
+# Add and pop (UFCS style)
 var stack = [1, 2]
-push(stack, 3)
-echo len(stack)
-let top = pop(stack)
+stack.add(3)
+echo stack.len
+let top = stack.pop()
 echo top
-echo len(stack)
+echo stack.len

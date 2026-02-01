@@ -10,34 +10,34 @@ var scores = {"math": "90", "english": "85"}
 scores["science"] = "95"
 echo scores["science"]
 
-# Check if key exists
-echo hasKey(scores, "math")
-echo hasKey(scores, "history")
+# Check if key exists (UFCS style)
+echo scores.hasKey("math")
+echo scores.hasKey("history")
 
 # Using in operator for key check
 echo "math" in scores
 echo "history" in scores
 
-# Get keys and values
-let k = keys(scores)
-echo len(k)
+# Get keys and values (UFCS style)
+let k = scores.keys
+echo k.len
 
-let v = values(scores)
-echo len(v)
+let v = scores.values
+echo v.len
 
-# Delete a key
-del(scores, "english")
-echo hasKey(scores, "english")
-echo len(keys(scores))
+# Delete a key (UFCS style)
+scores.del("english")
+echo scores.hasKey("english")
+echo scores.keys.len
 
 # Empty table
 let empty = {"temp": "x"}
-del(empty, "temp")
-echo len(keys(empty))
+empty.del("temp")
+echo empty.keys.len
 
-# Contains function
-echo contains(scores, "math")
-echo contains(scores, "history")
+# Contains function (UFCS style)
+echo scores.contains("math")
+echo scores.contains("history")
 
 # Print tables
 let simple = {"a": 1, "b": 2}
@@ -51,5 +51,5 @@ echo mixed
 
 # Empty table display
 let emptyTable = {"x": 1}
-del(emptyTable, "x")
+emptyTable.del("x")
 echo emptyTable

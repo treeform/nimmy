@@ -136,11 +136,11 @@ proc runDebugger(scriptPath: string) =
     if args.len != 1:
       raise newException(RuntimeError, "str() takes exactly 1 argument")
     stringValue($args[0])
-  vm.addProc("push") do (args: seq[Value]) -> Value:
+  vm.addProc("add") do (args: seq[Value]) -> Value:
     if args.len != 2:
-      raise newException(RuntimeError, "push() takes exactly 2 arguments")
+      raise newException(RuntimeError, "add() takes exactly 2 arguments")
     if args[0].kind != vkArray:
-      raise newException(RuntimeError, "First argument to push() must be an array")
+      raise newException(RuntimeError, "First argument to add() must be an array")
     args[0].arrayVal.add(args[1])
     args[0]
   clearScreen()

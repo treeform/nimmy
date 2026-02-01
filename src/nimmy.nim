@@ -88,12 +88,12 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "typeof() takes exactly 1 argument")
     return stringValue(typeName(args[0]))
   
-  # push(arr, value) - add to array
-  vm.addProc("push") do (args: seq[Value]) -> Value:
+  # add(arr, value) - add element to array (like Nim's seq.add)
+  vm.addProc("add") do (args: seq[Value]) -> Value:
     if args.len != 2:
-      raise newException(RuntimeError, "push() takes exactly 2 arguments")
+      raise newException(RuntimeError, "add() takes exactly 2 arguments")
     if args[0].kind != vkArray:
-      raise newException(RuntimeError, "First argument to push() must be an array")
+      raise newException(RuntimeError, "First argument to add() must be an array")
     args[0].arrayVal.add(args[1])
     return args[0]
   

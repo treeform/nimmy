@@ -8,8 +8,8 @@ echo target
 # String concatenation
 echo greeting & ", " & target & "!"
 
-# String length
-echo len(greeting)
+# String length (UFCS style)
+echo greeting.len
 
 # String indexing
 echo greeting[0]

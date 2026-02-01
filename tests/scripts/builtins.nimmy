@@ -1,28 +1,28 @@
 # Built-in functions test
 
-# len
-echo len("hello")
-echo len([1, 2, 3])
+# len (UFCS style)
+echo "hello".len
+echo [1, 2, 3].len
 
-# str
-echo str(42)
-echo str(3.14)
-echo str(true)
+# str (UFCS style)
+echo 42.str
+echo 3.14.str
+echo true.str
 
-# int and float
-echo int(3.7)
-echo float(5)
+# int and float (UFCS style)
+echo 3.7.int
+echo 5.float
 
-# typeof
-echo typeof(42)
-echo typeof("hello")
-echo typeof([1, 2])
-echo typeof(true)
+# typeof (UFCS style)
+echo 42.typeof
+echo "hello".typeof
+echo [1, 2].typeof
+echo true.typeof
 
-# abs
-echo abs(-5)
-echo abs(5)
-echo abs(-3.14)
+# abs (UFCS style)
+echo (-5).abs
+echo 5.abs
+echo (-3.14).abs
 
 # min and max
 echo min(5, 3)
