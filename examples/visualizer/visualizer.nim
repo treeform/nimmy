@@ -188,14 +188,14 @@ proc stepDebugger() =
 const
   AreaHeaderHeight = 32.0
   AreaMargin = 6.0
+  LineHeight = 18.0'f32
   BackgroundColor = parseHtmlColor("#1e1e2e").rgbx
-  LineHighlightColor = parseHtmlColor("#44475a").rgbx
-  CurrentLineColor = parseHtmlColor("#6272a4").rgbx
+  CurrentLineColor = parseHtmlColor("#44475a").rgbx
   LineNumberColor = parseHtmlColor("#6272a4").rgbx
   CodeColor = parseHtmlColor("#f8f8f2").rgbx
-  KeywordColor = parseHtmlColor("#ff79c6").rgbx
-  StringColor = parseHtmlColor("#f1fa8c").rgbx
-  CommentColor = parseHtmlColor("#6272a4").rgbx
+  HeaderTextColor = rgbx(200, 200, 200, 255)
+  DimTextColor = rgbx(128, 128, 128, 255)
+  SuccessColor = rgbx(100, 200, 100, 255)
 
 # =============================================================================
 # Panel System Globals
@@ -367,7 +367,7 @@ proc scan*(area: Area): (Area, AreaScan, Rect) =
   return (targetArea, areaScan, resRect)
 
 # =============================================================================
-# Panel Content Rendering
+# Panel Content Rendering (with scrollable frames)
 # =============================================================================
 
 proc formatValue(v: Value, indent: int = 0): string =
@@ -428,136 +428,108 @@ proc formatValue(v: Value, indent: int = 0): string =
     else:
       pad & $v.rangeStart & "..<" & $v.rangeEnd
 
-proc drawSourceCodePanel(contentRect: Rect) =
+proc drawSourceCodeContent() =
+  ## Draw source code content - call inside a frame template.
   if debugState == nil:
+    text "(no script loaded)"
     return
-
-  let padding = 8.0'f32
-  var y = contentRect.y + padding
-
-  sk.pushClipRect(contentRect)
 
   for i, line in debugState.sourceLines:
     let lineNum = i + 1
     let isCurrentLine = lineNum == debugState.currentLine and not debugState.finished
 
-    # Draw line highlight
+    # Draw line highlight for current line
     if isCurrentLine:
       sk.drawRect(
-        vec2(contentRect.x, y - 2),
-        vec2(contentRect.w, 18),
+        vec2(sk.pos.x, sk.at.y - 2),
+        vec2(sk.size.x - 16, LineHeight),
         CurrentLineColor
       )
 
-    # Draw line number
-    let lineNumStr = align($lineNum, 4)
-    discard sk.drawText("Code", lineNumStr, vec2(contentRect.x + padding, y), LineNumberColor)
+    # Draw line number + code
+    let lineNumStr = align($lineNum, 4) & "  " & line
+    discard sk.drawText("Code", lineNumStr, sk.at, if isCurrentLine: CodeColor else: CodeColor)
+    sk.advance(vec2(sk.size.x - 32, LineHeight))
 
-    # Draw code
-    let codeX = contentRect.x + padding + 40
-    discard sk.drawText("Code", line, vec2(codeX, y), CodeColor)
-
-    y += 18
-
-    if y > contentRect.y + contentRect.h:
-      break
-
-  sk.popClipRect()
-
-proc drawStackTracePanel(contentRect: Rect) =
+proc drawStackTraceContent() =
+  ## Draw stack trace content - call inside a frame template.
   if debugState == nil:
+    text "(no script loaded)"
     return
 
-  let padding = 8.0'f32
-  var y = contentRect.y + padding
+  discard sk.drawText("Default", "Call Stack:", sk.at, HeaderTextColor)
+  sk.advance(vec2(100, 20))
 
-  sk.pushClipRect(contentRect)
-
-  discard sk.drawText("Default", "Call Stack:", vec2(contentRect.x + padding, y), rgbx(200, 200, 200, 255))
-  y += 24
-
-  for i, frame in debugState.callStack:
+  for i, frm in debugState.callStack:
     let indent = "  ".repeat(i)
-    discard sk.drawText("Code", indent & frame, vec2(contentRect.x + padding, y), CodeColor)
-    y += 18
+    discard sk.drawText("Code", indent & frm, sk.at, CodeColor)
+    sk.advance(vec2(200, LineHeight))
 
   if debugState.finished:
-    y += 10
-    discard sk.drawText("Default", "Execution finished.", vec2(contentRect.x + padding, y), rgbx(100, 200, 100, 255))
+    sk.advance(vec2(0, 8))
+    discard sk.drawText("Default", "Execution complete.", sk.at, SuccessColor)
+    sk.advance(vec2(150, 20))
 
-  sk.popClipRect()
-
-proc drawOutputPanel(contentRect: Rect) =
+proc drawOutputContent() =
+  ## Draw output content - call inside a frame template.
   if debugState == nil:
+    text "(no script loaded)"
     return
 
-  let padding = 8.0'f32
-  var y = contentRect.y + padding
-
-  sk.pushClipRect(contentRect)
-
-  discard sk.drawText("Default", "Console Output:", vec2(contentRect.x + padding, y), rgbx(200, 200, 200, 255))
-  y += 24
+  discard sk.drawText("Default", "Console:", sk.at, HeaderTextColor)
+  sk.advance(vec2(80, 20))
 
   if debugState.outputLines.len == 0:
-    discard sk.drawText("Code", "(no output yet)", vec2(contentRect.x + padding, y), rgbx(128, 128, 128, 255))
+    discard sk.drawText("Code", "(no output)", sk.at, DimTextColor)
+    sk.advance(vec2(100, LineHeight))
   else:
     for line in debugState.outputLines:
-      discard sk.drawText("Code", line, vec2(contentRect.x + padding, y), CodeColor)
-      y += 18
+      discard sk.drawText("Code", line, sk.at, CodeColor)
+      sk.advance(vec2(sk.size.x - 32, LineHeight))
 
-      if y > contentRect.y + contentRect.h:
-        break
-
-  sk.popClipRect()
-
-proc drawVariablesPanel(contentRect: Rect) =
+proc drawVariablesContent() =
+  ## Draw variables content - call inside a frame template.
   if debugState == nil:
+    text "(no script loaded)"
     return
 
-  let padding = 8.0'f32
-  var y = contentRect.y + padding
-
-  sk.pushClipRect(contentRect)
-
-  discard sk.drawText("Default", "Variables:", vec2(contentRect.x + padding, y), rgbx(200, 200, 200, 255))
-  y += 24
+  discard sk.drawText("Default", "Variables:", sk.at, HeaderTextColor)
+  sk.advance(vec2(100, 20))
 
   var hasVars = false
   var scope = debugState.vm.currentScope
 
   while scope != nil:
     for name, value in scope.vars:
-      # Skip built-in functions
-      if value.kind == vkNativeProc:
+      # Skip built-in functions and types
+      if value.kind == vkNativeProc or value.kind == vkType:
         continue
 
       hasVars = true
       let valueStr = formatValue(value, 0)
       let displayStr = name & " = " & valueStr
-      discard sk.drawText("Code", displayStr, vec2(contentRect.x + padding, y), CodeColor)
-      y += 18
-
-      if y > contentRect.y + contentRect.h:
-        break
+      discard sk.drawText("Code", displayStr, sk.at, CodeColor)
+      sk.advance(vec2(sk.size.x - 32, LineHeight))
 
     scope = scope.parent
 
   if not hasVars:
-    discard sk.drawText("Code", "(no variables)", vec2(contentRect.x + padding, y), rgbx(128, 128, 128, 255))
-
-  sk.popClipRect()
+    discard sk.drawText("Code", "(no variables)", sk.at, DimTextColor)
+    sk.advance(vec2(100, LineHeight))
 
 proc drawPanelContent(panel: Panel, contentRect: Rect) =
-  case panel.kind
-  of pkSourceCode:
-    drawSourceCodePanel(contentRect)
-  of pkStackTrace:
-    drawStackTracePanel(contentRect)
-  of pkOutput:
-    drawOutputPanel(contentRect)
-  of pkVariables:
-    drawVariablesPanel(contentRect)
+  let frameId = "panel:" & panel.name & ":" & $cast[uint](panel)
+
+  frame(frameId, contentRect.xy, contentRect.wh):
+    case panel.kind
+    of pkSourceCode:
+      drawSourceCodeContent()
+    of pkStackTrace:
+      drawStackTraceContent()
+    of pkOutput:
+      drawOutputContent()
+    of pkVariables:
+      drawVariablesContent()
 
 # =============================================================================
 # Panel Drawing
@@ -645,10 +617,8 @@ proc drawAreaRecursive(area: Area, r: Rect) =
 
     sk.popClipRect()
 
-    # Draw Content
-    let contentRect = rect(r.x + 4, r.y + AreaHeaderHeight + 4, r.w - 8, r.h - AreaHeaderHeight - 8)
-    sk.draw9Patch("panel.body.9patch", 3, contentRect.xy - vec2(2, 2), contentRect.wh + vec2(4, 4))
-
+    # Draw Content (scrollable frame)
+    let contentRect = rect(r.x + 2, r.y + AreaHeaderHeight + 2, r.w - 4, r.h - AreaHeaderHeight - 4)
     let activePanel = area.panels[area.selectedPanelNum]
     drawPanelContent(activePanel, contentRect)
 
@@ -658,23 +628,22 @@ proc drawAreaRecursive(area: Area, r: Rect) =
 
 proc initRootArea() =
   rootArea = Area()
+
+  # Main split: Left (code + output) | Right (variables + stack)
   rootArea.split(Vertical)
-  rootArea.split = 0.60
+  rootArea.split = 0.70
 
-  # Left side: Source Code
-  rootArea.areas[0].addPanel("Source Code", pkSourceCode)
+  # Left column: Source Code (top 75%) + Output (bottom 25%)
+  rootArea.areas[0].split(Horizontal)
+  rootArea.areas[0].split = 0.75
+  rootArea.areas[0].areas[0].addPanel("Source Code", pkSourceCode)
+  rootArea.areas[0].areas[1].addPanel("Output", pkOutput)
 
-  # Right side: Stack, Output, Variables
+  # Right column: Variables (top 60%) + Stack Trace (bottom 40%)
   rootArea.areas[1].split(Horizontal)
-  rootArea.areas[1].split = 0.33
-
-  rootArea.areas[1].areas[0].addPanel("Stack Trace", pkStackTrace)
-
-  rootArea.areas[1].areas[1].split(Horizontal)
-  rootArea.areas[1].areas[1].split = 0.5
-
-  rootArea.areas[1].areas[1].areas[0].addPanel("Output", pkOutput)
-  rootArea.areas[1].areas[1].areas[1].addPanel("Variables", pkVariables)
+  rootArea.areas[1].split = 0.60
+  rootArea.areas[1].areas[0].addPanel("Variables", pkVariables)
+  rootArea.areas[1].areas[1].addPanel("Stack Trace", pkStackTrace)
 
 # =============================================================================
 # Main
@@ -765,8 +734,9 @@ proc main() =
           let (_, highlightRect) = targetArea.getTabInsertInfo(window.mousePos.vec2)
           dropHighlight = highlightRect
 
-    # Draw Areas
-    drawAreaRecursive(rootArea, rect(0, 1, window.size.x.float32, window.size.y.float32))
+    # Draw Areas (reserve space for status bar)
+    let statusBarHeight = 28.0'f32
+    drawAreaRecursive(rootArea, rect(0, 0, window.size.x.float32, window.size.y.float32 - statusBarHeight))
 
     # Draw Drop Highlight
     if showDropHighlight and dragPanel != nil:
@@ -779,8 +749,8 @@ proc main() =
       discard sk.drawText("Default", label, window.mousePos.vec2 + vec2(18, 14), rgbx(255, 255, 255, 255))
 
     # Draw status bar
-    let statusY = window.size.y.float32 - 24
-    sk.drawRect(vec2(0, statusY), vec2(window.size.x.float32, 24), rgbx(40, 42, 54, 255))
+    let statusY = window.size.y.float32 - statusBarHeight
+    sk.drawRect(vec2(0, statusY), vec2(window.size.x.float32, statusBarHeight), rgbx(40, 42, 54, 255))
 
     let statusText = if debugState != nil:
       if debugState.finished:
@@ -790,7 +760,13 @@ proc main() =
     else:
       "No script loaded"
 
-    discard sk.drawText("Default", statusText, vec2(10, statusY + 4), rgbx(200, 200, 200, 255))
+    discard sk.drawText("Default", statusText, vec2(10, statusY + 6), rgbx(200, 200, 200, 255))
+
+    # Show script path on the right
+    if debugState != nil:
+      let pathText = debugState.scriptPath
+      let pathSize = sk.getTextSize("Default", pathText)
+      discard sk.drawText("Default", pathText, vec2(window.size.x.float32 - pathSize.x - 10, statusY + 6), rgbx(150, 150, 150, 255))
 
     sk.endUi()
     window.swapBuffers()
