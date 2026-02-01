@@ -1,13 +1,11 @@
-## nimmy.nim
-## Main entry point and API for the Nimmy scripting language
-
-import nimmy_types
-import nimmy_lexer
-import nimmy_parser
-import nimmy_vm
-import nimmy_debug
-import nimmy_utils
-import std/[strformat, tables, strutils]
+## Main entry point and API for the Nimmy scripting language.
+import
+  std/[tables, strutils, strformat],
+  nimmy_types,
+  nimmy_parser,
+  nimmy_vm,
+  nimmy_debug,
+  nimmy_utils
 
 export nimmy_types
 export nimmy_vm.newVM, nimmy_vm.addProc, nimmy_vm.getOutput, nimmy_vm.clearOutput

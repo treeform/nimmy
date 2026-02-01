@@ -265,18 +265,15 @@ proc evalIf(vm: VM, node: Node): Value =
 proc evalFor(vm: VM, node: Node): Value =
   result = nilValue()
   let iter = vm.eval(node.forIter)
-  
-  vm.pushScope()
-  
   if iter.kind == vkRange:
     var i = iter.rangeStart
     let endVal = iter.rangeEnd
     let inclusive = iter.rangeInclusive
-    
     while (inclusive and i <= endVal) or (not inclusive and i < endVal):
+      vm.pushScope()
       vm.currentScope.define(node.forVar, intValue(i))
       result = vm.eval(node.forBody)
-      
+      vm.popScope()
       if vm.controlFlow == cfBreak:
         vm.controlFlow = cfNone
         break
@@ -284,14 +281,13 @@ proc evalFor(vm: VM, node: Node): Value =
         vm.controlFlow = cfNone
       if vm.controlFlow == cfReturn:
         break
-      
       i += 1
-  
   elif iter.kind == vkArray:
     for elem in iter.arrayVal:
+      vm.pushScope()
       vm.currentScope.define(node.forVar, elem)
       result = vm.eval(node.forBody)
-      
+      vm.popScope()
       if vm.controlFlow == cfBreak:
         vm.controlFlow = cfNone
         break
@@ -299,12 +295,12 @@ proc evalFor(vm: VM, node: Node): Value =
         vm.controlFlow = cfNone
       if vm.controlFlow == cfReturn:
         break
-  
   elif iter.kind == vkString:
     for c in iter.strVal:
+      vm.pushScope()
       vm.currentScope.define(node.forVar, stringValue($c))
       result = vm.eval(node.forBody)
-      
+      vm.popScope()
       if vm.controlFlow == cfBreak:
         vm.controlFlow = cfNone
         break
@@ -312,11 +308,8 @@ proc evalFor(vm: VM, node: Node): Value =
         vm.controlFlow = cfNone
       if vm.controlFlow == cfReturn:
         break
-  
   else:
-    vm.error(fmt"Cannot iterate over {typeName(iter)}", node.line, node.col)
-  
-  vm.popScope()
+    vm.error("Cannot iterate over " & typeName(iter), node.line, node.col)
 
 proc evalWhile(vm: VM, node: Node): Value =
   result = nilValue()

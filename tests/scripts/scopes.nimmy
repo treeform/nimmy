@@ -1,0 +1,88 @@
+# Test lexical scoping behavior.
+
+# Global variable
+var x = 100
+
+# Function that creates local x
+proc outer() =
+  var x = 10
+  echo "outer x: " & str(x)
+  
+  proc inner() =
+    var x = 1
+    echo "inner x: " & str(x)
+  
+  inner()
+  echo "outer x after inner: " & str(x)
+
+outer()
+echo "global x: " & str(x)
+
+# Test closure captures outer scope
+proc makeAdder(n) =
+  proc add(x) =
+    return x + n
+  return add
+
+let addFive = makeAdder(5)
+let addTen = makeAdder(10)
+
+echo "addFive(3): " & str(addFive(3))
+echo "addTen(3): " & str(addTen(3))
+
+# Test nested closures
+proc counter() =
+  var count = 0
+  proc increment() =
+    count = count + 1
+    return count
+  return increment
+
+let c1 = counter()
+let c2 = counter()
+
+echo "c1: " & str(c1())
+echo "c1: " & str(c1())
+echo "c2: " & str(c2())
+echo "c1: " & str(c1())
+
+# Test that inner scope shadows properly
+var y = "global"
+
+proc shadowTest() =
+  echo "before shadow: " & y
+  var y = "local"
+  echo "after shadow: " & y
+
+shadowTest()
+echo "after func: " & y
+
+# Test deeply nested scopes
+proc level1() =
+  var a = 1
+  proc level2() =
+    var b = 2
+    proc level3() =
+      var c = 3
+      echo "level3: " & str(a) & str(b) & str(c)
+    level3()
+    echo "level2: " & str(a) & str(b)
+  level2()
+  echo "level1: " & str(a)
+
+level1()
+
+# Test closure over loop variable
+proc makeClosures() =
+  var funcs = []
+  for i in 0 ..< 3:
+    let captured = i
+    proc f() =
+      return captured
+    push(funcs, f)
+  return funcs
+
+let closures = makeClosures()
+echo "closure 0: " & str(closures[0]())
+echo "closure 1: " & str(closures[1]())
+echo "closure 2: " & str(closures[2]())

@@ -1,0 +1,19 @@
+outer x: 10
+inner x: 1
+outer x after inner: 10
+global x: 100
+addFive(3): 8
+addTen(3): 13
+c1: 1
+c1: 2
+c2: 1
+c1: 3
+before shadow: global
+after shadow: local
+after func: global
+level3: 123
+level2: 12
+level1: 1
+closure 0: 0
+closure 1: 1
+closure 2: 2
