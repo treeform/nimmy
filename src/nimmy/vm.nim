@@ -1219,10 +1219,6 @@ proc continueExecution*(vm: VM) =
       break
     vm.step()
 
-proc runToBreakpoint*(vm: VM) =
-  ## Alias for continueExecution - run until breakpoint or end.
-  vm.continueExecution()
-
 # =============================================================================
 # Utility Functions
 # =============================================================================
