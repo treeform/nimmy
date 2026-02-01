@@ -28,7 +28,7 @@ score = score + 5
 
 # Array with items
 var inventory = ["sword", "shield", "potion"]
-push(inventory, "gold")
+inventory.add("gold")
 
 # Nested object
 type Enemy = object

@@ -1,14 +1,13 @@
 ## Simple step-by-step debugger for Nimmy scripts.
 ## Press Enter to advance to the next statement.
 import
-  std/[os, strutils, tables, terminal],
-  ../src/nimmy_types,
-  ../src/nimmy_parser,
-  ../src/nimmy_vm,
-  ../src/nimmy_utils
+  std/[os, strutils, tables],
+  ../src/nimmy/[types, parser, vm, utils]
+
 proc clearScreen() =
-  eraseScreen()
-  setCursorPos(0, 0)
+  # Cross-platform clear screen using ANSI escape codes
+  stdout.write("\x1B[2J\x1B[H")
+  stdout.flushFile()
 proc formatValue(v: Value, indent = 0): string =
   ## Formats a value with nested structure display.
   let pad = "  ".repeat(indent)
@@ -29,6 +28,16 @@ proc formatValue(v: Value, indent = 0): string =
         let comma = if i < v.arrayVal.len - 1: "," else: ""
         lines.add(formatValue(elem, indent + 1) & comma)
       lines.add(pad & "]")
+      lines.join("\n")
+  of vkSet:
+    if v.setVal.len == 0:
+      pad & "{}"
+    else:
+      var lines = @[pad & "{"]
+      for i, elem in v.setVal:
+        let comma = if i < v.setVal.len - 1: "," else: ""
+        lines.add(formatValue(elem, indent + 1) & comma)
+      lines.add(pad & "}")
       lines.join("\n")
   of vkTable:
     if v.tableVal.len == 0:
