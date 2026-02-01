@@ -9,6 +9,7 @@
 
 import types
 import utils
+import parser
 import std/[strformat, tables, strutils, sets]
 
 type
@@ -1218,6 +1219,117 @@ proc continueExecution*(vm: VM) =
     if vm.currentLine in vm.breakpoints:
       break
     vm.step()
+
+# =============================================================================
+# Interactive Execution
+# =============================================================================
+
+type
+  InteractiveResult* = object
+    success*: bool
+    value*: Value
+    output*: seq[string]
+    error*: string
+
+proc runInteractive*(vm: VM, code: string): InteractiveResult =
+  ## Execute code interactively in the current scope context.
+  ## This does NOT affect the main execution state (frames, currentLine, isFinished).
+  ## Returns the result of the expression or last statement.
+  ## 
+  ## If the code is a simple expression, it evaluates and returns the value.
+  ## If it's statements, it executes them and returns the last value.
+  ## Any output (print) is captured and returned.
+  ## Errors are caught and returned without crashing the main execution.
+  
+  result = InteractiveResult(success: false, value: nilValue(), output: @[], error: "")
+  
+  if code.strip() == "":
+    result.success = true
+    return
+  
+  # Parse the code
+  var ast: Node
+  try:
+    ast = parse(code)
+  except NimmyError as e:
+    result.error = "Parse error: " & e.msg
+    return
+  except CatchableError as e:
+    result.error = "Parse error: " & e.msg
+    return
+  
+  if ast.isNil:
+    result.success = true
+    return
+  
+  # Save current VM state
+  let savedOutputLen = vm.output.len
+  
+  # Use current scope for evaluation (so we can inspect local variables)
+  let evalScope = if vm.currentScope != nil: vm.currentScope else: vm.globalScope
+  
+  # Try to evaluate
+  try:
+    case ast.kind
+    of nkBlock, nkProgram:
+      # Multiple statements - execute each
+      for stmt in ast.stmts:
+        case stmt.kind
+        of nkEchoStmt:
+          # Handle echo/print directly
+          var parts: seq[string]
+          for arg in stmt.echoArgs:
+            parts.add($vm.evalExpr(arg))
+          let output = parts.join(" ")
+          vm.output.add(output)
+          result.value = stringValue(output)
+        of nkLetStmt, nkVarStmt:
+          # Variable declaration in interactive mode
+          let varName = stmt.varName
+          let varValue = if stmt.varValue.isNil: nilValue() else: vm.evalExpr(stmt.varValue)
+          evalScope.define(varName, varValue)
+        of nkAssign:
+          # Assignment
+          let val = vm.evalExpr(stmt.assignValue)
+          discard evalScope.assign(stmt.assignTarget.name, val)
+        of nkCall:
+          # Function call as statement
+          let val = vm.evalExpr(stmt)
+          result.value = val
+        else:
+          # Try as expression
+          result.value = vm.evalExpr(stmt)
+    
+    of nkIdent:
+      # Simple identifier - look it up
+      result.value = evalScope.lookup(ast.name)
+    
+    of nkCall, nkBinaryOp, nkUnaryOp, nkIntLit, nkFloatLit, nkStrLit, nkBoolLit, nkNilLit, nkArray, nkIndex, nkDot:
+      # Expression - evaluate it
+      result.value = vm.evalExpr(ast)
+    
+    of nkEchoStmt:
+      var parts: seq[string]
+      for arg in ast.echoArgs:
+        parts.add($vm.evalExpr(arg))
+      let output = parts.join(" ")
+      vm.output.add(output)
+      result.value = stringValue(output)
+    
+    else:
+      # Try as expression anyway
+      result.value = vm.evalExpr(ast)
+    
+    result.success = true
+    
+  except NimmyError as e:
+    result.error = "Error: " & e.msg
+  except CatchableError as e:
+    result.error = "Error: " & e.msg
+  
+  # Capture any new output
+  if vm.output.len > savedOutputLen:
+    result.output = vm.output[savedOutputLen..^1]
 
 # =============================================================================
 # Utility Functions
