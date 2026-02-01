@@ -8,8 +8,8 @@ import
   ../../src/nimmy/[types, parser, vm, utils]
 
 # Forward declarations for console state (defined later)
-var consoleInput {.threadvar.}: string
-var consoleInputActive {.threadvar.}: bool
+var consoleInput: string
+var consoleInputActive: bool
 
 # =============================================================================
 # Atlas Setup
@@ -114,10 +114,12 @@ proc addOutput(text: string, isError: bool = false) =
     debugState.outputLines.add(OutputLine(text: text, isError: isError))
     scrollOutputToBottom()
 
-proc addError(text: string) =
+proc addError(text: string, fatal: bool = true) =
   ## Add an error output line
+  ## If fatal=true, marks the debugger as having a fatal error (stops execution)
+  ## If fatal=false, just shows the error in red (for interactive errors)
   addOutput(text, isError = true)
-  if debugState != nil:
+  if fatal and debugState != nil:
     debugState.hasError = true
 
 proc syncOutput() =
@@ -852,9 +854,11 @@ proc executeConsoleInput() =
       if res.value.kind != vkNil and res.output.len == 0:
         addOutput($res.value)
     else:
-      addError(res.error)
+      # Interactive errors are non-fatal - show in red but don't stop VM
+      addError(res.error, fatal = false)
   else:
-    addError("No VM available (syntax error in script)")
+    # No VM is a non-fatal error too - user might want to restart
+    addError("No VM available (syntax error in script)", fatal = false)
   
   consoleInput = ""
 
