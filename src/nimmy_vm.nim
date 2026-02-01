@@ -190,9 +190,31 @@ proc evalUnaryOp(vm: VM, node: Node): Value =
     vm.error(fmt"Unknown unary operator '{node.unOp}'", node.line, node.col)
 
 proc evalCall(vm: VM, node: Node): Value =
-  let callee = vm.eval(node.callee)
-  
+  var callee: Value
   var args: seq[Value] = @[]
+  var ufcsReceiver: Value = nil
+  
+  # Check for UFCS: a.func(b) -> func(a, b)
+  if node.callee.kind == nkDot:
+    let receiver = vm.eval(node.callee.dotLeft)
+    let methodName = node.callee.dotField
+    # Try to find a function with this name
+    let maybeFunc = vm.currentScope.lookup(methodName)
+    if maybeFunc != nil and maybeFunc.kind in {vkProc, vkNativeProc}:
+      callee = maybeFunc
+      ufcsReceiver = receiver
+    elif receiver.kind == vkObject and receiver.objFields.hasKey(methodName):
+      # It's a method stored in the object
+      callee = receiver.objFields[methodName]
+    else:
+      # Fall back to regular evaluation (might error)
+      callee = vm.eval(node.callee)
+  else:
+    callee = vm.eval(node.callee)
+  
+  # Build args, prepending UFCS receiver if present
+  if ufcsReceiver != nil:
+    args.add(ufcsReceiver)
   for arg in node.args:
     args.add(vm.eval(arg))
   
@@ -209,10 +231,10 @@ proc evalCall(vm: VM, node: Node): Value =
     return obj
   
   if callee.kind != vkProc:
-    vm.error(fmt"Cannot call {typeName(callee)}", node.line, node.col)
+    vm.error("Cannot call " & typeName(callee), node.line, node.col)
   
   if args.len != callee.procParams.len:
-    vm.error(fmt"Expected {callee.procParams.len} arguments, got {args.len}", node.line, node.col)
+    vm.error("Expected " & $callee.procParams.len & " arguments, got " & $args.len, node.line, node.col)
   
   # Create new scope with closure as parent
   let savedScope = vm.currentScope
@@ -268,7 +290,24 @@ proc evalDot(vm: VM, node: Node): Value =
   if obj.kind == vkObject:
     if obj.objFields.hasKey(node.dotField):
       return obj.objFields[node.dotField]
-    vm.error(fmt"Object has no field '{node.dotField}'", node.line, node.col)
+    # Try UFCS for objects
+    let maybeFunc = vm.currentScope.lookup(node.dotField)
+    if maybeFunc != nil and maybeFunc.kind in {vkProc, vkNativeProc}:
+      # Call the function with obj as the first argument
+      if maybeFunc.kind == vkNativeProc:
+        return maybeFunc.nativeProc(@[obj])
+      if maybeFunc.procParams.len == 1:
+        let savedScope = vm.currentScope
+        vm.currentScope = newScope(maybeFunc.procClosure)
+        vm.currentScope.define(maybeFunc.procParams[0], obj)
+        result = vm.eval(maybeFunc.procBody)
+        if vm.controlFlow == cfReturn:
+          result = vm.returnValue
+          vm.controlFlow = cfNone
+          vm.returnValue = nil
+        vm.currentScope = savedScope
+        return result
+    vm.error("Object has no field '" & node.dotField & "'", node.line, node.col)
   
   # Built-in properties
   if obj.kind == vkArray:
@@ -279,7 +318,25 @@ proc evalDot(vm: VM, node: Node): Value =
     if node.dotField == "len":
       return intValue(obj.strVal.len)
   
-  vm.error(fmt"Cannot access field of {typeName(obj)}", node.line, node.col)
+  # UFCS: try to find a function with this name
+  let maybeFunc = vm.currentScope.lookup(node.dotField)
+  if maybeFunc != nil and maybeFunc.kind in {vkProc, vkNativeProc}:
+    # Call the function with obj as the first argument
+    if maybeFunc.kind == vkNativeProc:
+      return maybeFunc.nativeProc(@[obj])
+    if maybeFunc.procParams.len == 1:
+      let savedScope = vm.currentScope
+      vm.currentScope = newScope(maybeFunc.procClosure)
+      vm.currentScope.define(maybeFunc.procParams[0], obj)
+      result = vm.eval(maybeFunc.procBody)
+      if vm.controlFlow == cfReturn:
+        result = vm.returnValue
+        vm.controlFlow = cfNone
+        vm.returnValue = nil
+      vm.currentScope = savedScope
+      return result
+  
+  vm.error("Cannot access field of " & typeName(obj), node.line, node.col)
 
 proc evalBlock(vm: VM, node: Node): Value =
   result = nilValue()

@@ -1,0 +1,64 @@
+# Test Uniform Function Call Syntax (UFCS)
+# Nim supports multiple ways to call functions:
+# 1. Standard: func(a, b)
+# 2. Method:   a.func(b)  -> func(a, b)
+# 3. Command:  func a, b  -> func(a, b)
+# 4. Combined: a.func b   -> func(a, b)
+
+# Define test functions
+proc double(x) =
+  return x * 2
+
+proc add(a, b) =
+  return a + b
+
+proc greet(name) =
+  return "Hello, " & name
+
+proc triple(x) =
+  return x * 3
+
+# 1. Standard function call syntax: func(args)
+echo double(5)
+echo add(3, 4)
+echo greet("World")
+
+# 2. Command syntax (no parentheses): func arg
+echo double 10
+echo greet "Nim"
+
+# Command syntax with multiple args
+echo (add 5, 6)
+
+# 3. UFCS method-style syntax: a.func(b) -> func(a, b)
+echo 7.double()
+echo 8.add(2)
+echo "Alice".greet()
+
+# 4. UFCS chaining
+echo 3.double().triple()
+echo 2.triple().double()
+
+# 5. UFCS with built-in functions
+let arr = [1, 2, 3, 4, 5]
+echo arr.len()
+
+let s = "hello"
+echo s.len()
+
+# 6. UFCS without parentheses (for single-arg functions)
+echo 4.double
+echo 5.double.triple
+
+# 7. UFCS with mutating functions
+var numbers = [10, 20]
+numbers.push(30)
+echo numbers
+
+# 8. UFCS with type conversion
+echo 42.str()
+echo true.str()
+
+# 9. echo with multiple comma-separated args
+echo "test1"
+echo "test2", " ", "test3"

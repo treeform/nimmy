@@ -125,7 +125,12 @@ proc primary(P: Parser): Node =
   
   P.error(fmt"Expected expression, got {P.current.kind}")
 
-# Call and indexing
+# Check if current token can start a command-style argument
+proc canStartCommandArg(P: Parser): bool =
+  P.current.kind in {tkInt, tkFloat, tkString, tkTrue, tkFalse, tkNil,
+                      tkIdent, tkLParen, tkLBracket, tkLBrace}
+
+# Call, indexing, and command syntax
 proc postfix(P: Parser): Node =
   result = P.primary()
   
@@ -134,7 +139,7 @@ proc postfix(P: Parser): Node =
     let col = P.current.col
     
     if P.match(tkLParen):
-      # Function call
+      # Function call with parentheses
       var args: seq[Node] = @[]
       if not P.check(tkRParen):
         args.add(P.expression())
@@ -148,9 +153,23 @@ proc postfix(P: Parser): Node =
       discard P.consume(tkRBracket, "Expected ']' after index")
       result = Node(kind: nkIndex, line: line, col: col, indexee: result, index: index)
     elif P.match(tkDot):
-      # Field access
+      # Field access or UFCS method call
       let field = P.consume(tkIdent, "Expected field name after '.'")
       result = Node(kind: nkDot, line: line, col: col, dotLeft: result, dotField: field.lexeme)
+    elif result.kind == nkIdent and P.canStartCommandArg():
+      # Command syntax: ident arg1, arg2, ...
+      var args: seq[Node] = @[]
+      args.add(P.expression())
+      while P.match(tkComma):
+        args.add(P.expression())
+      result = Node(kind: nkCall, line: result.line, col: result.col, callee: result, args: args)
+    elif result.kind == nkDot and P.canStartCommandArg():
+      # UFCS command syntax: obj.method arg1, arg2, ...
+      var args: seq[Node] = @[]
+      args.add(P.expression())
+      while P.match(tkComma):
+        args.add(P.expression())
+      result = Node(kind: nkCall, line: result.line, col: result.col, callee: result, args: args)
     else:
       break
 
