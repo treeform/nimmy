@@ -1,0 +1,2 @@
+# Syntax error: trailing comma in arguments
+echo(1, 2,)

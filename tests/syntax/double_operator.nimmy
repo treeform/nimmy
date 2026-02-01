@@ -1,0 +1,2 @@
+# Syntax error: double operator
+let x = 5 + + 3

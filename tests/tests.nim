@@ -1,11 +1,13 @@
 ## Gold master tests for Nimmy.
 ## Runs all .nimmy scripts and compares output to .txt files.
-## Scripts in errors/ folder are expected to fail with specific error messages.
+## - scripts/  : Normal tests (expected to succeed)
+## - errors/   : Runtime error tests (expected to fail)
+## - syntax/   : Syntax error tests (expected to fail during parsing)
 import
   std/[os, strutils],
   ../src/nimmy
 
-proc runTestsInDir(dir: string, isErrorTests: bool, passed: var int, failed: var int) =
+proc runTestsInDir(dir, label: string, isErrorTests: bool, passed: var int, failed: var int) =
   if not dirExists(dir):
     return
   
@@ -34,29 +36,29 @@ proc runTestsInDir(dir: string, isErrorTests: bool, passed: var int, failed: var
     if isErrorTests:
       # Error tests should fail, and error message should contain expected text
       if errorMsg.len > 0 and expected in errorMsg:
-        echo "PASS " & testName
+        echo "PASS " & label & "/" & testName
         passed += 1
       elif errorMsg.len > 0:
-        echo "FAIL " & testName
+        echo "FAIL " & label & "/" & testName
         echo "  Expected error containing: " & expected
         echo "  Actual error: " & errorMsg
         failed += 1
       else:
-        echo "FAIL " & testName
+        echo "FAIL " & label & "/" & testName
         echo "  Expected error containing: " & expected
         echo "  But script succeeded with: " & actual.splitLines()[0] & "..."
         failed += 1
     else:
       # Normal tests should succeed and match expected output
       if errorMsg.len > 0:
-        echo "FAIL " & testName
+        echo "FAIL " & label & "/" & testName
         echo "  Error: " & errorMsg
         failed += 1
       elif actual == expected:
-        echo "PASS " & testName
+        echo "PASS " & label & "/" & testName
         passed += 1
       else:
-        echo "FAIL " & testName
+        echo "FAIL " & label & "/" & testName
         echo "  Expected: " & expected.splitLines()[0] & "..."
         echo "  Actual:   " & actual.splitLines()[0] & "..."
         failed += 1
@@ -65,16 +67,20 @@ proc runTests() =
   let baseDir = currentSourcePath().parentDir()
   let scriptsDir = baseDir / "scripts"
   let errorsDir = baseDir / "errors"
+  let syntaxDir = baseDir / "syntax"
   
   doAssert dirExists(scriptsDir), "Scripts directory not found: " & scriptsDir
   
   var passed, failed = 0
   
   # Run normal tests from scripts/
-  runTestsInDir(scriptsDir, isErrorTests = false, passed, failed)
+  runTestsInDir(scriptsDir, "scripts", isErrorTests = false, passed, failed)
   
-  # Run error tests from errors/
-  runTestsInDir(errorsDir, isErrorTests = true, passed, failed)
+  # Run runtime error tests from errors/
+  runTestsInDir(errorsDir, "errors", isErrorTests = true, passed, failed)
+  
+  # Run syntax error tests from syntax/
+  runTestsInDir(syntaxDir, "syntax", isErrorTests = true, passed, failed)
   
   echo ""
   echo "Results: " & $passed & " passed, " & $failed & " failed"
