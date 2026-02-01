@@ -88,13 +88,22 @@ type
 
 var debugState: DebuggerState
 
+# Forward declarations for scroll functions (defined after panel globals)
+proc ensureCurrentLineVisible()
+proc scrollOutputToBottom()
+proc requestScrollToLine(line: int)
+
 proc syncOutput() =
   ## Sync output from VM to debugState
   if debugState == nil or debugState.vm == nil:
     return
+  let hadOutput = debugState.outputLines.len
   if debugState.vm.output.len > debugState.outputLines.len:
     for i in debugState.outputLines.len ..< debugState.vm.output.len:
       debugState.outputLines.add(debugState.vm.output[i])
+  # Auto-scroll to bottom if new output was added
+  if debugState.outputLines.len > hadOutput:
+    scrollOutputToBottom()
 
 proc initDebugger(scriptPath: string) =
   # Preserve breakpoints across restarts
@@ -158,6 +167,9 @@ proc initDebugger(scriptPath: string) =
     debugState.vm.addBreakpoint(bp)
   
   debugState.running = true
+  
+  # Scroll to the first line
+  requestScrollToLine(1)
 
 proc toggleBreakpoint(line: int) =
   if debugState == nil or debugState.vm == nil:
@@ -174,8 +186,10 @@ proc stepDebugger() =
   try:
     debugState.vm.stepOver()
     syncOutput()
+    ensureCurrentLineVisible()
   except NimmyError as e:
     debugState.outputLines.add("Error: " & e.msg)
+    scrollOutputToBottom()
 
 proc stepIntoDebugger() =
   ## Step into - steps into function calls
@@ -184,8 +198,10 @@ proc stepIntoDebugger() =
   try:
     debugState.vm.stepInto()
     syncOutput()
+    ensureCurrentLineVisible()
   except NimmyError as e:
     debugState.outputLines.add("Error: " & e.msg)
+    scrollOutputToBottom()
 
 proc stepOutDebugger() =
   ## Step out - run until we exit the current function
@@ -194,8 +210,10 @@ proc stepOutDebugger() =
   try:
     debugState.vm.stepOut()
     syncOutput()
+    ensureCurrentLineVisible()
   except NimmyError as e:
     debugState.outputLines.add("Error: " & e.msg)
+    scrollOutputToBottom()
 
 proc continueDebugger() =
   ## Continue execution until breakpoint or end
@@ -204,8 +222,10 @@ proc continueDebugger() =
   try:
     debugState.vm.continueExecution()
     syncOutput()
+    ensureCurrentLineVisible()
   except NimmyError as e:
     debugState.outputLines.add("Error: " & e.msg)
+    scrollOutputToBottom()
 
 # =============================================================================
 # Panel Constants
@@ -214,7 +234,6 @@ proc continueDebugger() =
 const
   AreaHeaderHeight = 32.0
   AreaMargin = 6.0
-  LineHeight = 18.0'f32
   LineNumberWidth = 50.0'f32
   BackgroundColor = parseHtmlColor("#1e1e2e").rgbx
   CurrentLineColor = parseHtmlColor("#44475a").rgbx
@@ -239,6 +258,36 @@ var
   showDropHighlight: bool
   maybeDragStartPos: Vec2
   maybeDragPanel: Panel
+  # Global references to specific panels for auto-scroll
+  gSourceCodePanel: Panel
+  gOutputPanel: Panel
+
+# =============================================================================
+# Auto-Scroll State
+# =============================================================================
+
+# Scroll margin - when the current line is within this distance from the edge, scroll
+const ScrollMargin = 80.0'f32
+
+# Scroll requests - these are applied during drawing when we have access to font metrics
+var scrollToLineRequest: int = 0      # Line number to scroll to (0 = no request)
+var scrollOutputToBottomRequest: bool = false  # Whether to scroll output to bottom
+
+proc requestScrollToLine(line: int) =
+  ## Request scrolling to make a specific line visible
+  scrollToLineRequest = line
+
+proc requestScrollOutputToBottom() =
+  ## Request scrolling output panel to bottom
+  scrollOutputToBottomRequest = true
+
+# These are called from debug functions
+proc ensureCurrentLineVisible() =
+  if debugState != nil and debugState.vm != nil:
+    requestScrollToLine(debugState.vm.currentLine)
+
+proc scrollOutputToBottom() =
+  requestScrollOutputToBottom()
 
 # =============================================================================
 # Panel Logic
@@ -279,9 +328,9 @@ proc removeBlankAreas*(area: Area) =
     for subarea in area.areas:
       removeBlankAreas(subarea)
 
-proc addPanel*(area: Area, name: string, kind: PanelKind) =
-  let panel = Panel(name: name, kind: kind, parentArea: area)
-  area.panels.add(panel)
+proc addPanel*(area: Area, name: string, kind: PanelKind): Panel =
+  result = Panel(name: name, kind: kind, parentArea: area)
+  area.panels.add(result)
 
 proc movePanel*(area: Area, panel: Panel) =
   let idx = panel.parentArea.panels.find(panel)
@@ -458,13 +507,21 @@ proc formatValue(v: Value, indent: int = 0): string =
     else:
       pad & $v.rangeStart & "..<" & $v.rangeEnd
 
-proc drawSourceCodeContent() =
+proc drawSourceCodeContent(frameId: string) =
   ## Draw source code content - call inside a frame template.
   if debugState == nil or debugState.vm == nil:
     text "(no script loaded)"
     return
 
   let contentWidth = sk.size.x - 16
+  # Get actual font line height
+  let font = sk.atlas.fonts["Code"]
+  let actualLineHeight = font.lineHeight
+  
+  # Track the target line position for scroll-to-line
+  var targetLineTop: float32 = 0
+  var targetLineBottom: float32 = 0
+  var foundTargetLine = false
 
   for i, line in debugState.sourceLines:
     let lineNum = i + 1
@@ -474,9 +531,17 @@ proc drawSourceCodeContent() =
     # The current position (sk.at) is already scroll-adjusted by the frame
     let lineY = sk.at.y
     let lineX = sk.at.x
+    
+    # Track target line position (in scrolled coordinates relative to frame)
+    if scrollToLineRequest > 0 and lineNum == scrollToLineRequest:
+      # Store position relative to frame origin, accounting for current scroll
+      let currentScroll = if frameId in frameStates: frameStates[frameId].scrollPos.y else: 0.0
+      targetLineTop = lineY - sk.pos.y + currentScroll
+      targetLineBottom = targetLineTop + actualLineHeight
+      foundTargetLine = true
 
     # Define clickable area for breakpoint toggle (line number gutter)
-    let gutterRect = rect(lineX, lineY, LineNumberWidth, LineHeight)
+    let gutterRect = rect(lineX, lineY, LineNumberWidth, actualLineHeight)
 
     # Handle breakpoint click - mouseInsideClip accounts for scroll & clipping
     if mouseInsideClip(gutterRect) and window.buttonPressed[MouseLeft]:
@@ -486,7 +551,7 @@ proc drawSourceCodeContent() =
     if hasBreakpoint and not isCurrentLine:
       sk.drawRect(
         vec2(lineX, lineY),
-        vec2(contentWidth, LineHeight),
+        vec2(contentWidth, actualLineHeight),
         BreakpointLineColor
       )
 
@@ -494,14 +559,14 @@ proc drawSourceCodeContent() =
     if isCurrentLine:
       sk.drawRect(
         vec2(lineX, lineY),
-        vec2(contentWidth, LineHeight),
+        vec2(contentWidth, actualLineHeight),
         CurrentLineColor
       )
 
     # Draw breakpoint indicator (red dot in line number area)
     if hasBreakpoint:
       let dotX = lineX + 6
-      let dotY = lineY + (LineHeight - 10) / 2
+      let dotY = lineY + (actualLineHeight - 10) / 2
       sk.drawRect(vec2(dotX, dotY), vec2(10, 10), BreakpointColor)
 
     # Draw line number
@@ -512,7 +577,25 @@ proc drawSourceCodeContent() =
     let codeX = lineX + LineNumberWidth
     discard sk.drawText("Code", line, vec2(codeX, lineY), CodeColor)
 
-    sk.advance(vec2(contentWidth, LineHeight))
+    sk.advance(vec2(contentWidth, actualLineHeight))
+  
+  # Apply scroll-to-line after drawing all content
+  if scrollToLineRequest > 0 and foundTargetLine and frameId in frameStates:
+    let currentScroll = frameStates[frameId].scrollPos.y
+    let visibleHeight = sk.size.y
+    
+    # Check if line is within the comfortable visible area (with margin)
+    let viewTop = currentScroll + ScrollMargin
+    let viewBottom = currentScroll + visibleHeight - ScrollMargin
+    
+    if targetLineTop < viewTop:
+      # Line is above visible area - scroll up to show it with margin at top
+      frameStates[frameId].scrollPos.y = max(0.0, targetLineTop - ScrollMargin)
+    elif targetLineBottom > viewBottom:
+      # Line is below visible area - scroll down to show it with margin at bottom
+      frameStates[frameId].scrollPos.y = max(0.0, targetLineBottom - visibleHeight + ScrollMargin)
+    
+    scrollToLineRequest = 0
 
 proc drawButton(label: string, x, y, w, h: float32, enabled: bool = true): bool =
   ## Draw a button and return true if clicked.
@@ -582,6 +665,10 @@ proc drawStackTraceContent() =
     text "(no script loaded)"
     return
 
+  # Get actual font line height
+  let font = sk.atlas.fonts["Code"]
+  let actualLineHeight = font.lineHeight
+
   # Build call stack from VM's execution frames
   var callStack: seq[string] = @["<main>"]
   for frame in debugState.vm.frames:
@@ -591,32 +678,55 @@ proc drawStackTraceContent() =
   for i, frm in callStack:
     let indent = "  ".repeat(i)
     discard sk.drawText("Code", indent & frm, sk.at, CodeColor)
-    sk.advance(vec2(200, LineHeight))
+    sk.advance(vec2(200, actualLineHeight))
 
   if debugState.vm.isFinished:
     sk.advance(vec2(0, 8))
     discard sk.drawText("Default", "Execution complete.", sk.at, SuccessColor)
     sk.advance(vec2(150, 20))
 
-proc drawOutputContent() =
+proc drawOutputContent(frameId: string) =
   ## Draw output content - call inside a frame template.
   if debugState == nil or debugState.vm == nil:
     text "(no script loaded)"
     return
 
+  # Get actual font line height
+  let font = sk.atlas.fonts["Code"]
+  let actualLineHeight = font.lineHeight
+
   if debugState.outputLines.len == 0:
     discard sk.drawText("Code", "(no output)", sk.at, DimTextColor)
-    sk.advance(vec2(100, LineHeight))
+    sk.advance(vec2(100, actualLineHeight))
   else:
     for line in debugState.outputLines:
       discard sk.drawText("Code", line, sk.at, CodeColor)
-      sk.advance(vec2(sk.size.x - 32, LineHeight))
+      sk.advance(vec2(sk.size.x - 32, actualLineHeight))
+  
+  # Scroll to bottom if requested - do this AFTER drawing content.
+  # Use sk.stretchAt.y which tracks the maximum Y position content was drawn to.
+  if scrollOutputToBottomRequest and frameId in frameStates:
+    # sk.stretchAt.y is in scrolled coordinates, so we need to add back current scroll
+    # to get the actual content extent. sk.pos.y is the frame origin.
+    let currentScroll = frameStates[frameId].scrollPos.y
+    let contentBottom = sk.stretchAt.y + currentScroll - sk.pos.y + 16  # +16 for padding
+    let visibleHeight = sk.size.y
+    
+    # Set scroll so the bottom of content aligns with bottom of visible area
+    let maxScroll = max(0.0, contentBottom - visibleHeight)
+    
+    frameStates[frameId].scrollPos.y = maxScroll
+    scrollOutputToBottomRequest = false
 
 proc drawVariablesContent() =
   ## Draw variables content - call inside a frame template.
   if debugState == nil or debugState.vm == nil:
     text "(no script loaded)"
     return
+
+  # Get actual font line height
+  let font = sk.atlas.fonts["Code"]
+  let actualLineHeight = font.lineHeight
 
   var hasVars = false
   var scope = debugState.vm.currentScope
@@ -631,25 +741,25 @@ proc drawVariablesContent() =
       let valueStr = formatValue(value, 0)
       let displayStr = name & " = " & valueStr
       discard sk.drawText("Code", displayStr, sk.at, CodeColor)
-      sk.advance(vec2(sk.size.x - 32, LineHeight))
+      sk.advance(vec2(sk.size.x - 32, actualLineHeight))
 
     scope = scope.parent
 
   if not hasVars:
     discard sk.drawText("Code", "(no variables)", sk.at, DimTextColor)
-    sk.advance(vec2(100, LineHeight))
+    sk.advance(vec2(100, actualLineHeight))
 
 proc drawPanelContent(panel: Panel, contentRect: Rect) =
   let frameId = "panel:" & panel.name & ":" & $cast[uint](panel)
-
+  
   frame(frameId, contentRect.xy, contentRect.wh):
     case panel.kind
     of pkSourceCode:
-      drawSourceCodeContent()
+      drawSourceCodeContent(frameId)
     of pkStackTrace:
       drawStackTraceContent()
     of pkOutput:
-      drawOutputContent()
+      drawOutputContent(frameId)
     of pkVariables:
       drawVariablesContent()
     of pkControls:
@@ -760,19 +870,19 @@ proc initRootArea() =
   # Left column: Source Code (top 75%) + Output (bottom 25%)
   rootArea.areas[0].split(Horizontal)
   rootArea.areas[0].split = 0.75
-  rootArea.areas[0].areas[0].addPanel("Source Code", pkSourceCode)
-  rootArea.areas[0].areas[1].addPanel("Output", pkOutput)
+  gSourceCodePanel = rootArea.areas[0].areas[0].addPanel("Source Code", pkSourceCode)
+  gOutputPanel = rootArea.areas[0].areas[1].addPanel("Output", pkOutput)
 
   # Right column: Controls (top) + Variables (middle) + Stack Trace (bottom)
   rootArea.areas[1].split(Horizontal)
   rootArea.areas[1].split = 0.12
-  rootArea.areas[1].areas[0].addPanel("Controls", pkControls)
+  discard rootArea.areas[1].areas[0].addPanel("Controls", pkControls)
 
   # Variables + Stack below Controls
   rootArea.areas[1].areas[1].split(Horizontal)
   rootArea.areas[1].areas[1].split = 0.65
-  rootArea.areas[1].areas[1].areas[0].addPanel("Variables", pkVariables)
-  rootArea.areas[1].areas[1].areas[1].addPanel("Stack Trace", pkStackTrace)
+  discard rootArea.areas[1].areas[1].areas[0].addPanel("Variables", pkVariables)
+  discard rootArea.areas[1].areas[1].areas[1].addPanel("Stack Trace", pkStackTrace)
 
 # =============================================================================
 # Main

@@ -1,4 +1,8 @@
 # Demo script for the debugger.
+
+for i in 0 ..< 5:
+  echo "Hello world!"
+
 # Shows variables, function calls, and objects.
 
 # Simple variables
