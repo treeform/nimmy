@@ -276,6 +276,104 @@ const
   SuccessColor = rgbx(100, 200, 100, 255)
   ButtonColor = parseHtmlColor("#44475a").rgbx
   ButtonHoverColor = parseHtmlColor("#6272a4").rgbx
+  
+  # Syntax highlighting colors (Dracula-inspired)
+  KeywordColor = parseHtmlColor("#ff79c6").rgbx    # Pink for keywords
+  StringColor = parseHtmlColor("#f1fa8c").rgbx     # Yellow for strings
+  NumberColor = parseHtmlColor("#bd93f9").rgbx     # Purple for numbers
+  CommentColor = parseHtmlColor("#6272a4").rgbx    # Gray for comments
+  BoolNilColor = parseHtmlColor("#bd93f9").rgbx    # Purple for true/false/nil
+  
+  # Keywords list for syntax highlighting
+  NimmyKeywords = [
+    "let", "var", "proc", "func", "fn", "if", "elif", "else", 
+    "for", "while", "break", "continue", "return", "in", 
+    "not", "and", "or", "type", "object"
+  ]
+  NimmyLiterals = ["true", "false", "nil"]
+
+type
+  SyntaxToken = object
+    text: string
+    color: ColorRGBX
+
+# =============================================================================
+# Syntax Highlighting
+# =============================================================================
+
+proc isIdentChar(c: char): bool =
+  c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
+
+proc isDigit(c: char): bool =
+  c in {'0'..'9'}
+
+proc tokenizeLine(line: string): seq[SyntaxToken] =
+  ## Simple syntax highlighter that tokenizes a line into colored segments.
+  ## Works even with broken syntax - it's just pattern matching.
+  result = @[]
+  var i = 0
+  
+  while i < line.len:
+    let c = line[i]
+    
+    # Skip and collect whitespace
+    if c in {' ', '\t'}:
+      var ws = ""
+      while i < line.len and line[i] in {' ', '\t'}:
+        ws.add(line[i])
+        i += 1
+      result.add(SyntaxToken(text: ws, color: CodeColor))
+      continue
+    
+    # Comments (# to end of line)
+    if c == '#':
+      result.add(SyntaxToken(text: line[i..^1], color: CommentColor))
+      break
+    
+    # Strings (double or single quoted)
+    if c == '"' or c == '\'':
+      let quote = c
+      var str = $c
+      i += 1
+      while i < line.len:
+        str.add(line[i])
+        if line[i] == quote and (str.len < 2 or str[^2] != '\\'):
+          i += 1
+          break
+        i += 1
+      result.add(SyntaxToken(text: str, color: StringColor))
+      continue
+    
+    # Numbers (including floats)
+    if isDigit(c) or (c == '-' and i + 1 < line.len and isDigit(line[i + 1])):
+      var num = ""
+      if c == '-':
+        num.add(c)
+        i += 1
+      while i < line.len and (isDigit(line[i]) or line[i] == '.' or line[i] == '_'):
+        num.add(line[i])
+        i += 1
+      result.add(SyntaxToken(text: num, color: NumberColor))
+      continue
+    
+    # Identifiers and keywords
+    if c in {'a'..'z', 'A'..'Z', '_'}:
+      var ident = ""
+      while i < line.len and isIdentChar(line[i]):
+        ident.add(line[i])
+        i += 1
+      # Check if it's a keyword
+      if ident in NimmyKeywords:
+        result.add(SyntaxToken(text: ident, color: KeywordColor))
+      elif ident in NimmyLiterals:
+        result.add(SyntaxToken(text: ident, color: BoolNilColor))
+      else:
+        result.add(SyntaxToken(text: ident, color: CodeColor))
+      continue
+    
+    # Operators and other single characters
+    result.add(SyntaxToken(text: $c, color: CodeColor))
+    i += 1
 
 # =============================================================================
 # Panel System Globals
@@ -604,9 +702,12 @@ proc drawSourceCodeContent(frameId: string) =
     let lineNumStr = align($lineNum, 4)
     discard sk.drawText("Code", lineNumStr, vec2(lineX + 20, lineY), LineNumberColor)
 
-    # Draw code
-    let codeX = lineX + LineNumberWidth
-    discard sk.drawText("Code", line, vec2(codeX, lineY), CodeColor)
+    # Draw code with syntax highlighting
+    var codeX = lineX + LineNumberWidth
+    let tokens = tokenizeLine(line)
+    for token in tokens:
+      let textSize = sk.drawText("Code", token.text, vec2(codeX, lineY), token.color)
+      codeX += textSize.x
 
     sk.advance(vec2(contentWidth, actualLineHeight))
   
