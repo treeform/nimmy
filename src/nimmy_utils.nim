@@ -30,7 +30,7 @@ proc `$`*(v: Value): string =
   of vkTable:
     var parts: seq[string]
     for k, val in v.tableVal:
-      parts.add(fmt"{k}: {valueRepr(val)}")
+      parts.add("\"" & k & "\": " & valueRepr(val))
     result = "{" & parts.join(", ") & "}"
   of vkSet:
     var parts: seq[string]

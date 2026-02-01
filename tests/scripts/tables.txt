@@ -12,3 +12,7 @@ false
 0
 true
 false
+{"b": 2, "a": 1}
+{"outer": {"inner": "value"}}
+{"flag": true, "count": 42, "name": "test"}
+{}

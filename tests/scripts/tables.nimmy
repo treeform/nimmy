@@ -38,3 +38,18 @@ echo len(keys(empty))
 # Contains function
 echo contains(scores, "math")
 echo contains(scores, "history")
+
+# Print tables
+let simple = {"a": 1, "b": 2}
+echo simple
+
+let nested = {"outer": {"inner": "value"}}
+echo nested
+
+let mixed = {"name": "test", "count": 42, "flag": true}
+echo mixed
+
+# Empty table display
+let emptyTable = {"x": 1}
+del(emptyTable, "x")
+echo emptyTable
