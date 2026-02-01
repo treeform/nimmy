@@ -1,0 +1,305 @@
+# Advanced tests for tricky edge cases
+
+# =====================
+# OPERATOR PRECEDENCE
+# =====================
+echo "=== Operator Precedence ==="
+
+# Multiplication before addition
+echo 2 + 3 * 4
+echo (2 + 3) * 4
+
+# Unary minus precedence
+echo -3 * 2
+echo 10 - -5
+
+# $ operator precedence  
+echo $1 & $2
+echo $(1 + 2)
+
+# Comparison and logical operators
+echo 1 < 2 and 3 > 2
+echo 1 > 2 or 3 > 2
+echo not (1 > 2)
+
+# Chained comparisons behavior
+let a = 5
+echo a > 3 and a < 10
+
+# =====================
+# SHORT-CIRCUIT EVALUATION
+# =====================
+echo "=== Short-Circuit ==="
+
+var sideEffect = 0
+
+proc incAndTrue() =
+  sideEffect = sideEffect + 1
+  return true
+
+proc incAndFalse() =
+  sideEffect = sideEffect + 1
+  return false
+
+# 'and' should short-circuit on false
+sideEffect = 0
+let r1 = false and incAndTrue()
+echo "and short-circuit: " & $sideEffect
+
+# 'or' should short-circuit on true
+sideEffect = 0
+let r2 = true or incAndTrue()
+echo "or short-circuit: " & $sideEffect
+
+# Verify both sides evaluated when needed
+sideEffect = 0
+let r3 = true and incAndTrue()
+echo "and both: " & $sideEffect
+
+sideEffect = 0
+let r4 = false or incAndTrue()
+echo "or both: " & $sideEffect
+
+# =====================
+# NESTED CONTROL FLOW
+# =====================
+echo "=== Nested Control Flow ==="
+
+# Break in nested loops
+var breakResult = 0
+for i in 0 ..< 5:
+  for j in 0 ..< 5:
+    if j == 2:
+      break
+    breakResult = breakResult + 1
+echo "break nested: " & $breakResult
+
+# Continue in nested loops
+var contResult = 0
+for i in 0 ..< 3:
+  for j in 0 ..< 3:
+    if j == 1:
+      continue
+    contResult = contResult + 1
+echo "continue nested: " & $contResult
+
+# Return from nested if
+proc nestedReturn(x) =
+  if x > 0:
+    if x > 10:
+      return "big"
+    else:
+      return "small"
+  return "zero or negative"
+
+echo nestedReturn(15)
+echo nestedReturn(5)
+echo nestedReturn(-1)
+
+# Early return in loop
+proc findFirst(arr, val) =
+  for i in 0 ..< arr.len:
+    if arr[i] == val:
+      return i
+  return -1
+
+echo "find 3: " & $findFirst([1, 2, 3, 4, 5], 3)
+echo "find 9: " & $findFirst([1, 2, 3, 4, 5], 9)
+
+# =====================
+# COMPLEX CLOSURES
+# =====================
+echo "=== Complex Closures ==="
+
+# Closure returning closure
+proc makeMultiplier(x) =
+  proc multiply(y) =
+    proc apply(z) =
+      return x * y * z
+    return apply
+  return multiply
+
+let mult2 = makeMultiplier(2)
+let mult2by3 = mult2(3)
+echo "2*3*4 = " & $mult2by3(4)
+
+# Multiple closures sharing state
+proc sharedState() =
+  var count = 0
+  proc inc() =
+    count = count + 1
+    return count
+  proc dec() =
+    count = count - 1
+    return count
+  proc get() =
+    return count
+  return [inc, dec, get]
+
+let ops = sharedState()
+let incOp = ops[0]
+let decOp = ops[1]
+let getOp = ops[2]
+echo "init: " & $getOp()
+echo "inc: " & $incOp()
+echo "inc: " & $incOp()
+echo "dec: " & $decOp()
+echo "get: " & $getOp()
+
+# =====================
+# RECURSION
+# =====================
+echo "=== Recursion ==="
+
+# Fibonacci (tests multiple recursive calls)
+proc fib(n) =
+  if n <= 1:
+    return n
+  return fib(n - 1) + fib(n - 2)
+
+echo "fib(10) = " & $fib(10)
+
+# Mutual recursion
+proc isEven(n) =
+  if n == 0:
+    return true
+  return isOdd(n - 1)
+
+proc isOdd(n) =
+  if n == 0:
+    return false
+  return isEven(n - 1)
+
+echo "isEven(10): " & $isEven(10)
+echo "isOdd(10): " & $isOdd(10)
+
+# =====================
+# COLLECTION EDGE CASES
+# =====================
+echo "=== Collections ==="
+
+# Empty collections
+let emptyArr = []
+echo "empty arr len: " & $emptyArr.len
+
+let emptySet = {}
+echo "empty set card: " & $emptySet.card
+
+# Nested arrays
+let nested = [[1, 2], [3, 4], [5, 6]]
+echo "nested[1][0]: " & $nested[1][0]
+
+# Array of arrays modification
+var matrix = [[1, 2], [3, 4]]
+matrix[0][1] = 99
+echo "modified: " & $matrix[0][1]
+
+# Building array dynamically
+var built = []
+for i in 1 .. 5:
+  built.add(i * i)
+echo "squares: " & $built
+
+# =====================
+# OBJECT EDGE CASES
+# =====================
+echo "=== Objects ==="
+
+type Point = object
+  x
+  y
+
+# Object in array
+let points = [Point(1, 2), Point(3, 4)]
+echo "point 0: " & $points[0].x & ", " & $points[0].y
+
+# Nested objects
+type Rect = object
+  topLeft
+  bottomRight
+
+let rect = Rect(Point(0, 0), Point(10, 10))
+echo "rect tl: " & $rect.topLeft.x & ", " & $rect.topLeft.y
+
+# Modify nested object field
+var mutableRect = Rect(Point(0, 0), Point(5, 5))
+mutableRect.bottomRight.x = 100
+echo "modified rect br.x: " & $mutableRect.bottomRight.x
+
+# =====================
+# STRING EDGE CASES
+# =====================
+echo "=== Strings ==="
+
+# Empty string
+let empty = ""
+echo "empty len: " & $empty.len
+
+# String with special chars in concat
+let s1 = "Hello"
+let s2 = "World"
+echo s1 & " " & s2 & "!"
+
+# Chained concatenation
+echo "a" & "b" & "c" & "d"
+
+# String indexing edge
+let word = "Nimmy"
+echo "first: " & word[0]
+echo "last: " & word[word.len - 1]
+
+# =====================
+# RANGE EDGE CASES
+# =====================
+echo "=== Ranges ==="
+
+# Empty range (exclusive)
+var emptyCount = 0
+for i in 5 ..< 5:
+  emptyCount = emptyCount + 1
+echo "empty range count: " & $emptyCount
+
+# Single element range (inclusive)
+var singleCount = 0
+for i in 5 .. 5:
+  singleCount = singleCount + 1
+echo "single range count: " & $singleCount
+
+# Negative to positive
+var negToPosSum = 0
+for i in -2 .. 2:
+  negToPosSum = negToPosSum + i
+echo "sum -2..2: " & $negToPosSum
+
+# =====================
+# UFCS EDGE CASES
+# =====================
+echo "=== UFCS Edge Cases ==="
+
+proc double(x) =
+  return x * 2
+
+proc addOne(x) =
+  return x + 1
+
+# Long chain
+echo "chain: " & $5.double.addOne.double.addOne
+
+# UFCS with arrays
+echo "arr sum via chain: " & $[1, 2, 3].len.double
+
+# =====================
+# TYPE COERCION
+# =====================
+echo "=== Type Coercion ==="
+
+# Int and float mixing
+echo 5 + 3.5
+echo 10 / 4
+echo 2.0 * 3
+
+# Comparisons between int and float
+echo 5 == 5.0
+echo 3 < 3.5
+
+echo "=== All Advanced Tests Passed ==="
