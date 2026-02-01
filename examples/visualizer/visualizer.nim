@@ -77,54 +77,40 @@ type
 # =============================================================================
 
 type
-  StepMode = enum
-    smPaused       ## Waiting for user input
-    smStep         ## Execute one statement then pause
-    smStepInto     ## Step into function calls
-    smStepOut      ## Run until we exit current call depth
-    smContinue     ## Run until breakpoint or end
-
   DebuggerState = ref object
     scriptPath: string
     source: string
     sourceLines: seq[string]
     ast: Node
     vm: VM
-    currentLine: int
     running: bool
-    finished: bool
     outputLines: seq[string]
-    callStack: seq[string]
-    breakpoints: HashSet[int]   ## Line numbers with breakpoints
-    stepMode: StepMode
-    callDepth: int              ## Current call stack depth
-    targetCallDepth: int        ## For step out - target depth to stop at
 
 var debugState: DebuggerState
+
+proc syncOutput() =
+  ## Sync output from VM to debugState
+  if debugState == nil or debugState.vm == nil:
+    return
+  if debugState.vm.output.len > debugState.outputLines.len:
+    for i in debugState.outputLines.len ..< debugState.vm.output.len:
+      debugState.outputLines.add(debugState.vm.output[i])
 
 proc initDebugger(scriptPath: string) =
   # Preserve breakpoints across restarts
   var oldBreakpoints: HashSet[int]
-  if debugState != nil:
-    oldBreakpoints = debugState.breakpoints
+  if debugState != nil and debugState.vm != nil:
+    oldBreakpoints = debugState.vm.breakpoints
 
   debugState = DebuggerState(
     scriptPath: scriptPath,
-    currentLine: 0,
     running: false,
-    finished: false,
-    outputLines: @[],
-    callStack: @["<main>"],
-    breakpoints: oldBreakpoints,
-    stepMode: smPaused,
-    callDepth: 1,
-    targetCallDepth: 0
+    outputLines: @[]
   )
 
   if not fileExists(scriptPath):
     debugState.source = "# Error: File not found: " & scriptPath
     debugState.sourceLines = @[debugState.source]
-    debugState.finished = true
     return
 
   debugState.source = readFile(scriptPath)
@@ -164,112 +150,62 @@ proc initDebugger(scriptPath: string) =
       raise newException(RuntimeError, "Cannot pop from empty array")
     args[0].arrayVal.pop()
 
-  # Set up VM hooks for debugging
-  debugState.vm.onStatement = proc(line, col: int): bool =
-    debugState.currentLine = line
-    
-    # Capture any new output
-    if debugState.vm.output.len > debugState.outputLines.len:
-      for i in debugState.outputLines.len ..< debugState.vm.output.len:
-        debugState.outputLines.add(debugState.vm.output[i])
-    
-    case debugState.stepMode
-    of smPaused:
-      # Already paused, don't continue
-      return false
-    of smStep:
-      # Single step - pause after this statement
-      debugState.stepMode = smPaused
-      return false
-    of smStepInto:
-      # Step into - pause at every statement
-      debugState.stepMode = smPaused
-      return false
-    of smStepOut:
-      # Step out - continue until call depth decreases
-      if debugState.callDepth <= debugState.targetCallDepth:
-        debugState.stepMode = smPaused
-        return false
-      return true  # Keep running
-    of smContinue:
-      # Check for breakpoint
-      if line in debugState.breakpoints:
-        debugState.stepMode = smPaused
-        return false
-      return true  # Keep running
+  # Load the AST into the VM for step-based execution
+  debugState.vm.load(debugState.ast)
   
-  debugState.vm.onEnterFunction = proc(name: string) =
-    debugState.callStack.add(name)
-    debugState.callDepth = debugState.callStack.len
+  # Restore breakpoints
+  for bp in oldBreakpoints:
+    debugState.vm.addBreakpoint(bp)
   
-  debugState.vm.onExitFunction = proc(name: string) =
-    if debugState.callStack.len > 1:
-      discard debugState.callStack.pop()
-    debugState.callDepth = debugState.callStack.len
-  
-  # Get first line from AST
-  if debugState.ast.kind == nkProgram and debugState.ast.stmts.len > 0:
-    debugState.currentLine = debugState.ast.stmts[0].line
-    debugState.running = true
+  debugState.running = true
 
 proc toggleBreakpoint(line: int) =
-  if debugState == nil:
+  if debugState == nil or debugState.vm == nil:
     return
-  if line in debugState.breakpoints:
-    debugState.breakpoints.excl(line)
+  if debugState.vm.hasBreakpoint(line):
+    debugState.vm.removeBreakpoint(line)
   else:
-    debugState.breakpoints.incl(line)
-
-proc runExecution() =
-  ## Run the VM until it pauses or finishes
-  if debugState == nil or debugState.finished:
-    return
-  
-  try:
-    discard debugState.vm.eval(debugState.ast)
-    
-    # Capture final output
-    if debugState.vm.output.len > debugState.outputLines.len:
-      for i in debugState.outputLines.len ..< debugState.vm.output.len:
-        debugState.outputLines.add(debugState.vm.output[i])
-    
-    # Check if we truly finished or just paused
-    if debugState.stepMode != smPaused:
-      debugState.finished = true
-  except NimmyError as e:
-    debugState.outputLines.add("Error: " & e.msg)
-    debugState.finished = true
+    debugState.vm.addBreakpoint(line)
 
 proc stepDebugger() =
-  ## Single step - execute one statement
-  if debugState == nil or debugState.finished:
+  ## Single step - execute one statement (step over)
+  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished:
     return
-  debugState.stepMode = smStep
-  runExecution()
+  try:
+    debugState.vm.stepOver()
+    syncOutput()
+  except NimmyError as e:
+    debugState.outputLines.add("Error: " & e.msg)
 
 proc stepIntoDebugger() =
-  ## Step into - same as step but will stop inside functions
-  if debugState == nil or debugState.finished:
+  ## Step into - steps into function calls
+  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished:
     return
-  debugState.stepMode = smStepInto
-  runExecution()
+  try:
+    debugState.vm.stepInto()
+    syncOutput()
+  except NimmyError as e:
+    debugState.outputLines.add("Error: " & e.msg)
 
 proc stepOutDebugger() =
   ## Step out - run until we exit the current function
-  if debugState == nil or debugState.finished:
+  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished:
     return
-  debugState.stepMode = smStepOut
-  debugState.targetCallDepth = debugState.callDepth - 1
-  if debugState.targetCallDepth < 1:
-    debugState.targetCallDepth = 1
-  runExecution()
+  try:
+    debugState.vm.stepOut()
+    syncOutput()
+  except NimmyError as e:
+    debugState.outputLines.add("Error: " & e.msg)
 
 proc continueDebugger() =
   ## Continue execution until breakpoint or end
-  if debugState == nil or debugState.finished:
+  if debugState == nil or debugState.vm == nil or debugState.vm.isFinished:
     return
-  debugState.stepMode = smContinue
-  runExecution()
+  try:
+    debugState.vm.continueExecution()
+    syncOutput()
+  except NimmyError as e:
+    debugState.outputLines.add("Error: " & e.msg)
 
 # =============================================================================
 # Panel Constants
@@ -524,7 +460,7 @@ proc formatValue(v: Value, indent: int = 0): string =
 
 proc drawSourceCodeContent() =
   ## Draw source code content - call inside a frame template.
-  if debugState == nil:
+  if debugState == nil or debugState.vm == nil:
     text "(no script loaded)"
     return
 
@@ -532,8 +468,8 @@ proc drawSourceCodeContent() =
 
   for i, line in debugState.sourceLines:
     let lineNum = i + 1
-    let isCurrentLine = lineNum == debugState.currentLine and not debugState.finished
-    let hasBreakpoint = lineNum in debugState.breakpoints
+    let isCurrentLine = lineNum == debugState.vm.currentLine and not debugState.vm.isFinished
+    let hasBreakpoint = debugState.vm.hasBreakpoint(lineNum)
 
     # The current position (sk.at) is already scroll-adjusted by the frame
     let lineY = sk.at.y
@@ -605,7 +541,7 @@ proc drawButton(label: string, x, y, w, h: float32, enabled: bool = true): bool 
 
 proc drawControlsContent() =
   ## Draw debug controls panel content.
-  if debugState == nil:
+  if debugState == nil or debugState.vm == nil:
     text "(no script loaded)"
     return
 
@@ -613,7 +549,7 @@ proc drawControlsContent() =
   let btnW = 70.0'f32
   let btnH = 26.0'f32
   let spacing = 6.0'f32
-  let notFinished = not debugState.finished
+  let notFinished = not debugState.vm.isFinished
 
   # Row 1: Execution controls
   var x = baseX
@@ -642,23 +578,29 @@ proc drawControlsContent() =
 
 proc drawStackTraceContent() =
   ## Draw stack trace content - call inside a frame template.
-  if debugState == nil:
+  if debugState == nil or debugState.vm == nil:
     text "(no script loaded)"
     return
 
-  for i, frm in debugState.callStack:
+  # Build call stack from VM's execution frames
+  var callStack: seq[string] = @["<main>"]
+  for frame in debugState.vm.frames:
+    if frame.kind == fkFunction and frame.funcName.len > 0:
+      callStack.add(frame.funcName)
+
+  for i, frm in callStack:
     let indent = "  ".repeat(i)
     discard sk.drawText("Code", indent & frm, sk.at, CodeColor)
     sk.advance(vec2(200, LineHeight))
 
-  if debugState.finished:
+  if debugState.vm.isFinished:
     sk.advance(vec2(0, 8))
     discard sk.drawText("Default", "Execution complete.", sk.at, SuccessColor)
     sk.advance(vec2(150, 20))
 
 proc drawOutputContent() =
   ## Draw output content - call inside a frame template.
-  if debugState == nil:
+  if debugState == nil or debugState.vm == nil:
     text "(no script loaded)"
     return
 
@@ -672,7 +614,7 @@ proc drawOutputContent() =
 
 proc drawVariablesContent() =
   ## Draw variables content - call inside a frame template.
-  if debugState == nil:
+  if debugState == nil or debugState.vm == nil:
     text "(no script loaded)"
     return
 
@@ -947,11 +889,11 @@ proc main() =
     let statusY = window.size.y.float32 - statusBarHeight
     sk.drawRect(vec2(0, statusY), vec2(window.size.x.float32, statusBarHeight), rgbx(40, 42, 54, 255))
 
-    let statusText = if debugState != nil:
-      if debugState.finished:
+    let statusText = if debugState != nil and debugState.vm != nil:
+      if debugState.vm.isFinished:
         "Finished | Press R to restart"
       else:
-        fmt"Line {debugState.currentLine} | Space=Step, C=Continue, R=Restart"
+        fmt"Line {debugState.vm.currentLine} | Space=Step, C=Continue, R=Restart"
     else:
       "No script loaded"
 

@@ -18,14 +18,14 @@ type
     cfContinue,
     cfReturn
 
-  FrameKind = enum
+  FrameKind* = enum
     fkBlock       ## Executing statements in a block
     fkForLoop     ## Executing a for loop
     fkWhileLoop   ## Executing a while loop
     fkFunction    ## Inside a function call
 
   ExecutionFrame* = ref object
-    kind: FrameKind
+    kind*: FrameKind
     stmts: seq[Node]          ## Statements to execute
     stmtIndex: int            ## Current statement index
     scope: Scope              ## Scope for this frame
@@ -36,7 +36,7 @@ type
     # While loops
     whileNode: Node           ## The while loop node
     # Functions
-    funcName: string          ## Function name (for debugging)
+    funcName*: string         ## Function name (for debugging)
     returnToScope: Scope      ## Scope to restore after function returns
     # Return value handling
     returnVarName: string     ## Variable to assign return value to (if any)
@@ -51,7 +51,7 @@ type
     controlFlow: ControlFlow
     returnValue: Value
     # Execution state
-    frames: seq[ExecutionFrame]  ## Stack of execution frames
+    frames*: seq[ExecutionFrame]  ## Stack of execution frames
     currentLine*: int            ## Current line number
     isFinished*: bool            ## Whether execution is complete
     # Debugging
