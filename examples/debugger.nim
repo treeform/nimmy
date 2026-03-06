@@ -18,22 +18,22 @@ proc formatValue(v: Value, indent = 0): string =
     return pad & "nil"
   
   case v.kind
-  of vkNil:
+  of NilValue:
     pad & "nil"
   
-  of vkBool:
+  of BoolValue:
     pad & $v.boolVal
   
-  of vkInt:
+  of IntValue:
     pad & $v.intVal
   
-  of vkFloat:
+  of FloatValue:
     pad & $v.floatVal
   
-  of vkString:
+  of StringValue:
     pad & "\"" & v.strVal & "\""
   
-  of vkArray:
+  of ArrayValue:
     if v.arrayVal.len == 0:
       pad & "[]"
     else:
@@ -44,7 +44,7 @@ proc formatValue(v: Value, indent = 0): string =
       lines.add(pad & "]")
       lines.join("\n")
   
-  of vkSet:
+  of SetValue:
     if v.setVal.len == 0:
       pad & "{}"
     else:
@@ -55,7 +55,7 @@ proc formatValue(v: Value, indent = 0): string =
       lines.add(pad & "}")
       lines.join("\n")
   
-  of vkTable:
+  of TableValue:
     if v.tableVal.len == 0:
       pad & "{}"
     else:
@@ -68,23 +68,23 @@ proc formatValue(v: Value, indent = 0): string =
       lines.add(pad & "}")
       lines.join("\n")
   
-  of vkObject:
+  of ObjectValue:
     var lines = @[pad & v.objType & " {"]
     for fieldName, fieldVal in v.objFields:
       lines.add(pad & "  " & fieldName & ": " & formatValue(fieldVal, 0).strip())
     lines.add(pad & "}")
     lines.join("\n")
   
-  of vkProc:
+  of ProcValue:
     pad & "<proc " & v.procName & ">"
   
-  of vkNativeProc:
+  of NativeProcValue:
     pad & "<native " & v.nativeName & ">"
   
-  of vkType:
+  of TypeValue:
     pad & "<type " & v.typeNameVal & ">"
   
-  of vkRange:
+  of RangeValue:
     if v.rangeInclusive:
       pad & $v.rangeStart & ".." & $v.rangeEnd
     else:
@@ -158,7 +158,7 @@ proc evalWithDebug(vm: VM, node: Node, source: string): Value =
     return nilValue()
   
   case node.kind
-  of nkProgram, nkBlock:
+  of ProgramNode, BlockNode:
     result = nilValue()
     for stmt in node.stmts:
       if stmt.line > 0:
@@ -189,9 +189,9 @@ proc runDebugger(scriptPath: string) =
     if args.len != 1:
       raise newException(RuntimeError, "len() takes exactly 1 argument")
     case args[0].kind
-    of vkString: intValue(args[0].strVal.len)
-    of vkArray: intValue(args[0].arrayVal.len)
-    of vkTable: intValue(args[0].tableVal.len)
+    of StringValue: intValue(args[0].strVal.len)
+    of ArrayValue: intValue(args[0].arrayVal.len)
+    of TableValue: intValue(args[0].tableVal.len)
     else: raise newException(RuntimeError, "Cannot get length of " & typeName(args[0]))
   
   vm.addProc("str") do (args: seq[Value]) -> Value:
@@ -202,7 +202,7 @@ proc runDebugger(scriptPath: string) =
   vm.addProc("add") do (args: seq[Value]) -> Value:
     if args.len != 2:
       raise newException(RuntimeError, "add() takes exactly 2 arguments")
-    if args[0].kind != vkArray:
+    if args[0].kind != ArrayValue:
       raise newException(RuntimeError, "First argument to add() must be an array")
     args[0].arrayVal.add(args[1])
     args[0]

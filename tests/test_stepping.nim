@@ -81,12 +81,12 @@ let y = x + 8
     vm.step()
     let xVal = vm.currentScope.lookup("x")
     doAssert not xVal.isNil, "x should exist after step 1"
-    doAssert xVal.kind == vkInt and xVal.intVal == 42, "x should be 42"
+    doAssert xVal.kind == IntValue and xVal.intVal == 42, "x should be 42"
     
     vm.step()
     let yVal = vm.currentScope.lookup("y")
     doAssert not yVal.isNil, "y should exist after step 2"
-    doAssert yVal.kind == vkInt and yVal.intVal == 50, "y should be 50"
+    doAssert yVal.kind == IntValue and yVal.intVal == 50, "y should be 50"
     
     doAssert vm.isFinished
 

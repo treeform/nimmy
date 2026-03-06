@@ -112,19 +112,19 @@ proc inspect*(d: Debugger, name: string): string =
     return fmt"Variable '{name}' not found"
   
   case value.kind
-  of vkObject:
+  of ObjectValue:
     var lines: seq[string] = @[]
     lines.add(fmt"{name}: {value.objType}")
     for fieldName, fieldVal in value.objFields:
       lines.add(fmt"  .{fieldName} = {valueRepr(fieldVal)}")
     return lines.join("\n")
-  of vkArray:
+  of ArrayValue:
     var lines: seq[string] = @[]
     lines.add(fmt"{name}: array[{value.arrayVal.len}]")
     for i, elem in value.arrayVal:
       lines.add(fmt"  [{i}] = {valueRepr(elem)}")
     return lines.join("\n")
-  of vkTable:
+  of TableValue:
     var lines: seq[string] = @[]
     lines.add(fmt"{name}: table[{value.tableVal.len}]")
     for key, val in value.tableVal:

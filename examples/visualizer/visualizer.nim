@@ -54,15 +54,15 @@ proc snapToPixels(rect: Rect): Rect =
 
 type
   AreaLayout = enum
-    Horizontal
-    Vertical
+    HorizontalLayout
+    VerticalLayout
 
   PanelKind = enum
-    pkSourceCode
-    pkStackTrace
-    pkConsole
-    pkVariables
-    pkControls
+    SourceCodePanel
+    StackTracePanel
+    ConsolePanel
+    VariablesPanel
+    ControlsPanel
 
   Area = ref object
     layout: AreaLayout
@@ -78,12 +78,12 @@ type
     parentArea: Area
 
   AreaScan = enum
-    Header
-    Body
-    North
-    South
-    East
-    West
+    HeaderScan
+    BodyScan
+    NorthScan
+    SouthScan
+    EastScan
+    WestScan
 
 # =============================================================================
 # Debugger State
@@ -182,9 +182,9 @@ proc initDebugger(scriptPath: string) =
     if args.len != 1:
       raise newException(RuntimeError, "len() takes exactly 1 argument")
     case args[0].kind
-    of vkString: intValue(args[0].strVal.len)
-    of vkArray: intValue(args[0].arrayVal.len)
-    of vkTable: intValue(args[0].tableVal.len)
+    of StringValue: intValue(args[0].strVal.len)
+    of ArrayValue: intValue(args[0].arrayVal.len)
+    of TableValue: intValue(args[0].tableVal.len)
     else: raise newException(RuntimeError, "Cannot get length of " & typeName(args[0]))
 
   debugState.vm.addProc("str") do (args: seq[Value]) -> Value:
@@ -195,7 +195,7 @@ proc initDebugger(scriptPath: string) =
   debugState.vm.addProc("add") do (args: seq[Value]) -> Value:
     if args.len != 2:
       raise newException(RuntimeError, "add() takes exactly 2 arguments")
-    if args[0].kind != vkArray:
+    if args[0].kind != ArrayValue:
       raise newException(RuntimeError, "First argument to add() must be an array")
     args[0].arrayVal.add(args[1])
     args[0]
@@ -203,7 +203,7 @@ proc initDebugger(scriptPath: string) =
   debugState.vm.addProc("pop") do (args: seq[Value]) -> Value:
     if args.len != 1:
       raise newException(RuntimeError, "pop() takes exactly 1 argument")
-    if args[0].kind != vkArray:
+    if args[0].kind != ArrayValue:
       raise newException(RuntimeError, "Argument to pop() must be an array")
     if args[0].arrayVal.len == 0:
       raise newException(RuntimeError, "Cannot pop from empty array")
@@ -566,22 +566,22 @@ proc scan*(area: Area): (Area, AreaScan, Rect) =
         westRect = rect(area.rect.xy + vec2(0, AreaHeaderHeight), vec2(area.rect.w * 0.2, area.rect.h - AreaHeaderHeight))
 
       if mousePos.overlaps(headerRect):
-        areaScan = Header
+        areaScan = HeaderScan
         resRect = headerRect
       elif mousePos.overlaps(northRect):
-        areaScan = North
+        areaScan = NorthScan
         resRect = northRect
       elif mousePos.overlaps(southRect):
-        areaScan = South
+        areaScan = SouthScan
         resRect = southRect
       elif mousePos.overlaps(eastRect):
-        areaScan = East
+        areaScan = EastScan
         resRect = eastRect
       elif mousePos.overlaps(westRect):
-        areaScan = West
+        areaScan = WestScan
         resRect = westRect
       elif mousePos.overlaps(bodyRect):
-        areaScan = Body
+        areaScan = BodyScan
         resRect = bodyRect
 
       targetArea = area
@@ -600,17 +600,17 @@ proc formatValue(v: Value, indent: int = 0): string =
     return pad & "nil"
 
   case v.kind
-  of vkNil:
+  of NilValue:
     pad & "nil"
-  of vkBool:
+  of BoolValue:
     pad & $v.boolVal
-  of vkInt:
+  of IntValue:
     pad & $v.intVal
-  of vkFloat:
+  of FloatValue:
     pad & $v.floatVal
-  of vkString:
+  of StringValue:
     pad & "\"" & v.strVal & "\""
-  of vkArray:
+  of ArrayValue:
     if v.arrayVal.len == 0:
       pad & "[]"
     else:
@@ -618,7 +618,7 @@ proc formatValue(v: Value, indent: int = 0): string =
       for elem in v.arrayVal:
         parts.add(formatValue(elem, 0))
       pad & "[" & parts.join(", ") & "]"
-  of vkSet:
+  of SetValue:
     if v.setVal.len == 0:
       pad & "{}"
     else:
@@ -626,7 +626,7 @@ proc formatValue(v: Value, indent: int = 0): string =
       for elem in v.setVal:
         parts.add(formatValue(elem, 0))
       pad & "{" & parts.join(", ") & "}"
-  of vkTable:
+  of TableValue:
     if v.tableVal.len == 0:
       pad & "{:}"
     else:
@@ -634,18 +634,18 @@ proc formatValue(v: Value, indent: int = 0): string =
       for k, val in v.tableVal:
         parts.add("\"" & k & "\": " & formatValue(val, 0))
       pad & "{" & parts.join(", ") & "}"
-  of vkObject:
+  of ObjectValue:
     var parts: seq[string] = @[]
     for k, val in v.objFields:
       parts.add(k & ": " & formatValue(val, 0))
     pad & v.objType & "(" & parts.join(", ") & ")"
-  of vkProc:
+  of ProcValue:
     pad & "<proc " & v.procName & ">"
-  of vkNativeProc:
+  of NativeProcValue:
     pad & "<native " & v.nativeName & ">"
-  of vkType:
+  of TypeValue:
     pad & "<type " & v.typeNameVal & ">"
-  of vkRange:
+  of RangeValue:
     if v.rangeInclusive:
       pad & $v.rangeStart & ".." & $v.rangeEnd
     else:
@@ -825,7 +825,7 @@ proc drawStackTraceContent() =
   # Build call stack from VM's execution frames
   var callStack: seq[string] = @["<main>"]
   for frame in debugState.vm.frames:
-    if frame.kind == fkFunction and frame.funcName.len > 0:
+    if frame.kind == FunctionFrame and frame.funcName.len > 0:
       callStack.add(frame.funcName)
 
   for i, frm in callStack:
@@ -862,7 +862,7 @@ proc executeConsoleInput() =
       for line in res.output:
         addOutput(line)
       # Show result value if not nil and not already printed
-      if res.value.kind != vkNil and res.output.len == 0:
+      if res.value.kind != NilValue and res.output.len == 0:
         addOutput($res.value)
     else:
       # Interactive errors are non-fatal - show in red but don't stop VM
@@ -925,7 +925,7 @@ proc drawVariablesContent() =
   while scope != nil:
     for name, value in scope.vars:
       # Skip built-in functions and types
-      if value.kind == vkNativeProc or value.kind == vkType:
+      if value.kind == NativeProcValue or value.kind == TypeValue:
         continue
 
       hasVars = true
@@ -943,7 +943,7 @@ proc drawVariablesContent() =
 proc drawPanelContent(panel: Panel, contentRect: Rect) =
   let frameId = "panel:" & panel.name & ":" & $cast[uint](panel)
   
-  if panel.kind == pkConsole:
+  if panel.kind == ConsolePanel:
     # Console has special layout: output area + input field
     let inputHeight = 28.0'f32
     let outputRect = rect(contentRect.x, contentRect.y, contentRect.w, contentRect.h - inputHeight)
@@ -972,15 +972,15 @@ proc drawPanelContent(panel: Panel, contentRect: Rect) =
   else:
     frame(frameId, contentRect.xy, contentRect.wh):
       case panel.kind
-      of pkSourceCode:
+      of SourceCodePanel:
         drawSourceCodeContent(frameId)
-      of pkStackTrace:
+      of StackTracePanel:
         drawStackTraceContent()
-      of pkVariables:
+      of VariablesPanel:
         drawVariablesContent()
-      of pkControls:
+      of ControlsPanel:
         drawControlsContent()
-      of pkConsole:
+      of ConsolePanel:
         discard  # Handled above
 
 # =============================================================================
@@ -992,7 +992,7 @@ proc drawAreaRecursive(area: Area, r: Rect) =
 
   if area.areas.len > 0:
     let m = AreaMargin / 2
-    if area.layout == Horizontal:
+    if area.layout == HorizontalLayout:
       let splitPos = r.h * area.split
       let splitRect = rect(r.x, r.y + splitPos - 2, r.w, 4)
 
@@ -1024,7 +1024,7 @@ proc drawAreaRecursive(area: Area, r: Rect) =
     if area.selectedPanelNum > area.panels.len - 1:
       area.selectedPanelNum = area.panels.len - 1
 
-    # Draw Header
+    # Draw HeaderScan
     let headerRect = rect(r.x, r.y, r.w, AreaHeaderHeight)
     sk.draw9Patch("panel.header.9patch", 3, headerRect.xy, headerRect.wh)
 
@@ -1082,25 +1082,25 @@ proc initRootArea() =
   rootArea = Area()
 
   # Main split: Left (code + output) | Right (controls + variables + stack)
-  rootArea.split(Vertical)
+  rootArea.split(VerticalLayout)
   rootArea.split = 0.68
 
   # Left column: Source Code (top 75%) + Output (bottom 25%)
-  rootArea.areas[0].split(Horizontal)
+  rootArea.areas[0].split(HorizontalLayout)
   rootArea.areas[0].split = 0.75
-  gSourceCodePanel = rootArea.areas[0].areas[0].addPanel("Source Code", pkSourceCode)
-  gOutputPanel = rootArea.areas[0].areas[1].addPanel("Console", pkConsole)
+  gSourceCodePanel = rootArea.areas[0].areas[0].addPanel("Source Code", SourceCodePanel)
+  gOutputPanel = rootArea.areas[0].areas[1].addPanel("Console", ConsolePanel)
 
   # Right column: Controls (top) + Variables (middle) + Stack Trace (bottom)
-  rootArea.areas[1].split(Horizontal)
+  rootArea.areas[1].split(HorizontalLayout)
   rootArea.areas[1].split = 0.12
-  discard rootArea.areas[1].areas[0].addPanel("Controls", pkControls)
+  discard rootArea.areas[1].areas[0].addPanel("Controls", ControlsPanel)
 
   # Variables + Stack below Controls
-  rootArea.areas[1].areas[1].split(Horizontal)
+  rootArea.areas[1].areas[1].split(HorizontalLayout)
   rootArea.areas[1].areas[1].split = 0.65
-  discard rootArea.areas[1].areas[1].areas[0].addPanel("Variables", pkVariables)
-  discard rootArea.areas[1].areas[1].areas[1].addPanel("Stack Trace", pkStackTrace)
+  discard rootArea.areas[1].areas[1].areas[0].addPanel("Variables", VariablesPanel)
+  discard rootArea.areas[1].areas[1].areas[1].addPanel("Stack Trace", StackTracePanel)
 
 # =============================================================================
 # Main
@@ -1188,7 +1188,7 @@ proc main() =
       if not window.buttonDown[MouseLeft]:
         dragArea = nil
       else:
-        if dragArea.layout == Horizontal:
+        if dragArea.layout == HorizontalLayout:
           sk.cursor = Cursor(kind: ResizeUpDownCursor)
           dragArea.split = (window.mousePos.vec2.y - dragArea.rect.y) / dragArea.rect.h
         else:
@@ -1203,25 +1203,25 @@ proc main() =
         let (targetArea, areaScan, _) = rootArea.scan()
         if targetArea != nil:
           case areaScan:
-            of Header:
+            of HeaderScan:
               let (idx, _) = targetArea.getTabInsertInfo(window.mousePos.vec2)
               targetArea.insertPanel(dragPanel, idx)
-            of Body:
+            of BodyScan:
               targetArea.movePanel(dragPanel)
-            of North:
-              targetArea.split(Horizontal)
+            of NorthScan:
+              targetArea.split(HorizontalLayout)
               targetArea.areas[0].movePanel(dragPanel)
               targetArea.areas[1].movePanels(targetArea.panels)
-            of South:
-              targetArea.split(Horizontal)
+            of SouthScan:
+              targetArea.split(HorizontalLayout)
               targetArea.areas[1].movePanel(dragPanel)
               targetArea.areas[0].movePanels(targetArea.panels)
-            of East:
-              targetArea.split(Vertical)
+            of EastScan:
+              targetArea.split(VerticalLayout)
               targetArea.areas[1].movePanel(dragPanel)
               targetArea.areas[0].movePanels(targetArea.panels)
-            of West:
-              targetArea.split(Vertical)
+            of WestScan:
+              targetArea.split(VerticalLayout)
               targetArea.areas[0].movePanel(dragPanel)
               targetArea.areas[1].movePanels(targetArea.panels)
 
@@ -1232,7 +1232,7 @@ proc main() =
         dropHighlight = rect
         showDropHighlight = true
 
-        if targetArea != nil and areaScan == Header:
+        if targetArea != nil and areaScan == HeaderScan:
           let (_, highlightRect) = targetArea.getTabInsertInfo(window.mousePos.vec2)
           dropHighlight = highlightRect
 

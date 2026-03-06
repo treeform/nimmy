@@ -6,70 +6,70 @@ import std/[tables, hashes]
 type
   TokenKind* = enum
     # Literals
-    tkInt,          # 123
-    tkFloat,        # 3.14
-    tkString,       # "hello"
-    tkTrue,         # true
-    tkFalse,        # false
-    tkNil,          # nil
-    tkIdent,        # variable/function names
+    IntToken,          # 123
+    FloatToken,        # 3.14
+    StringToken,       # "hello"
+    TrueToken,         # true
+    FalseToken,        # false
+    NilToken,          # nil
+    IdentToken,        # variable/function names
 
     # Keywords
-    tkLet,          # let
-    tkVar,          # var
-    tkProc,         # proc
-    tkFunc,         # func (alias for proc)
-    tkIf,           # if
-    tkElif,         # elif
-    tkElse,         # else
-    tkFor,          # for
-    tkWhile,        # while
-    tkBreak,        # break
-    tkContinue,     # continue
-    tkReturn,       # return
-    tkIn,           # in
-    tkNot,          # not
-    tkAnd,          # and
-    tkOr,           # or
-    tkType,         # type
-    tkObject,       # object
-    tkEcho,         # echo (built-in)
+    LetToken,          # let
+    VarToken,          # var
+    ProcToken,         # proc
+    FuncToken,         # func (alias for proc)
+    IfToken,           # if
+    ElifToken,         # elif
+    ElseToken,         # else
+    ForToken,          # for
+    WhileToken,        # while
+    BreakToken,        # break
+    ContinueToken,     # continue
+    ReturnToken,       # return
+    InToken,           # in
+    NotToken,          # not
+    AndToken,          # and
+    OrToken,           # or
+    TypeToken,         # type
+    ObjectToken,       # object
+    EchoToken,         # echo (built-in)
 
     # Operators
-    tkPlus,         # +
-    tkMinus,        # -
-    tkStar,         # *
-    tkSlash,        # /
-    tkPercent,      # %
-    tkAmp,          # &
-    tkEq,           # =
-    tkEqEq,         # ==
-    tkNotEq,        # !=
-    tkLt,           # <
-    tkLe,           # <=
-    tkGt,           # >
-    tkGe,           # >=
-    tkDotDot,       # ..
-    tkDotDotLt,     # ..<
-    tkDollar,       # $
+    PlusToken,         # +
+    MinusToken,        # -
+    StarToken,         # *
+    SlashToken,        # /
+    PercentToken,      # %
+    AmpToken,          # &
+    EqToken,           # =
+    EqEqToken,         # ==
+    NotEqToken,        # !=
+    LtToken,           # <
+    LeToken,           # <=
+    GtToken,           # >
+    GeToken,           # >=
+    DotDotToken,       # ..
+    DotDotLtToken,     # ..<
+    DollarToken,       # $
 
     # Delimiters
-    tkLParen,       # (
-    tkRParen,       # )
-    tkLBracket,     # [
-    tkRBracket,     # ]
-    tkLBrace,       # {
-    tkRBrace,       # }
-    tkComma,        # ,
-    tkDot,          # .
-    tkColon,        # :
-    tkSemicolon,    # ;
+    LParenToken,       # (
+    RParenToken,       # )
+    LBracketToken,     # [
+    RBracketToken,     # ]
+    LBraceToken,       # {
+    RBraceToken,       # }
+    CommaToken,        # ,
+    DotToken,          # .
+    ColonToken,        # :
+    SemicolonToken,    # ;
 
     # Structure
-    tkNewline,      # \n (significant)
-    tkIndent,       # increase in indentation
-    tkDedent,       # decrease in indentation
-    tkEof           # end of file
+    NewlineToken,      # \n (significant)
+    IndentToken,       # increase in indentation
+    DedentToken,       # decrease in indentation
+    EofToken           # end of file
 
   Token* = object
     kind*: TokenKind
@@ -79,179 +79,179 @@ type
 
   # AST Node types
   NodeKind* = enum
-    nkEmpty,
-    nkIntLit,
-    nkFloatLit,
-    nkStrLit,
-    nkBoolLit,
-    nkNilLit,
-    nkIdent,
-    nkBinaryOp,
-    nkUnaryOp,
-    nkCall,
-    nkIndex,
-    nkDot,
-    nkLetStmt,
-    nkVarStmt,
-    nkAssign,
-    nkIfStmt,
-    nkElifBranch,
-    nkElseBranch,
-    nkForStmt,
-    nkWhileStmt,
-    nkBreakStmt,
-    nkContinueStmt,
-    nkReturnStmt,
-    nkProcDef,
-    nkTypeDef,
-    nkObjectDef,
-    nkFieldDef,
-    nkBlock,
-    nkEchoStmt,
-    nkProgram,
-    nkArray,
-    nkTable,
-    nkSet,
-    nkRange
+    EmptyNode,
+    IntLitNode,
+    FloatLitNode,
+    StrLitNode,
+    BoolLitNode,
+    NilLitNode,
+    IdentNode,
+    BinaryOpNode,
+    UnaryOpNode,
+    CallNode,
+    IndexNode,
+    DotNode,
+    LetStmtNode,
+    VarStmtNode,
+    AssignNode,
+    IfStmtNode,
+    ElifBranchNode,
+    ElseBranchNode,
+    ForStmtNode,
+    WhileStmtNode,
+    BreakStmtNode,
+    ContinueStmtNode,
+    ReturnStmtNode,
+    ProcDefNode,
+    TypeDefNode,
+    ObjectDefNode,
+    FieldDefNode,
+    BlockNode,
+    EchoStmtNode,
+    ProgramNode,
+    ArrayNode,
+    TableNode,
+    SetNode,
+    RangeNode
 
   Node* = ref object
     line*: int
     col*: int
     case kind*: NodeKind
-    of nkIntLit:
+    of IntLitNode:
       intVal*: int64
-    of nkFloatLit:
+    of FloatLitNode:
       floatVal*: float64
-    of nkStrLit:
+    of StrLitNode:
       strVal*: string
-    of nkBoolLit:
+    of BoolLitNode:
       boolVal*: bool
-    of nkNilLit:
+    of NilLitNode:
       discard
-    of nkIdent:
+    of IdentNode:
       name*: string
-    of nkBinaryOp:
+    of BinaryOpNode:
       binOp*: string
       binLeft*, binRight*: Node
-    of nkUnaryOp:
+    of UnaryOpNode:
       unOp*: string
       unOperand*: Node
-    of nkCall:
+    of CallNode:
       callee*: Node
       args*: seq[Node]
-    of nkIndex:
+    of IndexNode:
       indexee*: Node
       index*: Node
-    of nkDot:
+    of DotNode:
       dotLeft*: Node
       dotField*: string
-    of nkLetStmt, nkVarStmt:
+    of LetStmtNode, VarStmtNode:
       varName*: string
       varValue*: Node
-    of nkAssign:
+    of AssignNode:
       assignTarget*: Node
       assignValue*: Node
-    of nkIfStmt:
+    of IfStmtNode:
       ifCond*: Node
       ifBody*: Node
       elifBranches*: seq[Node]
       elseBranch*: Node
-    of nkElifBranch:
+    of ElifBranchNode:
       elifCond*: Node
       elifBody*: Node
-    of nkElseBranch:
+    of ElseBranchNode:
       elseBody*: Node
-    of nkForStmt:
+    of ForStmtNode:
       forVar*: string
       forIter*: Node
       forBody*: Node
-    of nkWhileStmt:
+    of WhileStmtNode:
       whileCond*: Node
       whileBody*: Node
-    of nkBreakStmt, nkContinueStmt:
+    of BreakStmtNode, ContinueStmtNode:
       discard
-    of nkReturnStmt:
+    of ReturnStmtNode:
       returnValue*: Node
-    of nkProcDef:
+    of ProcDefNode:
       procName*: string
       procParams*: seq[string]
       procBody*: Node
-    of nkTypeDef:
+    of TypeDefNode:
       typeName*: string
       typeBody*: Node
-    of nkObjectDef:
+    of ObjectDefNode:
       objectFields*: seq[Node]
-    of nkFieldDef:
+    of FieldDefNode:
       fieldName*: string
-    of nkBlock, nkProgram:
+    of BlockNode, ProgramNode:
       stmts*: seq[Node]
-    of nkEchoStmt:
+    of EchoStmtNode:
       echoArgs*: seq[Node]
-    of nkArray:
+    of ArrayNode:
       arrayElems*: seq[Node]
-    of nkTable:
+    of TableNode:
       tableKeys*: seq[Node]
       tableVals*: seq[Node]
-    of nkSet:
+    of SetNode:
       setElems*: seq[Node]
-    of nkRange:
+    of RangeNode:
       rangeStart*: Node
       rangeEnd*: Node
       rangeInclusive*: bool
-    of nkEmpty:
+    of EmptyNode:
       discard
 
   # Runtime value types
   ValueKind* = enum
-    vkNil,
-    vkBool,
-    vkInt,
-    vkFloat,
-    vkString,
-    vkArray,
-    vkTable,
-    vkSet,
-    vkObject,
-    vkProc,
-    vkNativeProc,
-    vkType,
-    vkRange
+    NilValue,
+    BoolValue,
+    IntValue,
+    FloatValue,
+    StringValue,
+    ArrayValue,
+    TableValue,
+    SetValue,
+    ObjectValue,
+    ProcValue,
+    NativeProcValue,
+    TypeValue,
+    RangeValue
 
   NativeProc* = proc(args: seq[Value]): Value {.nimcall.}
 
   Value* = ref object
     case kind*: ValueKind
-    of vkNil:
+    of NilValue:
       discard
-    of vkBool:
+    of BoolValue:
       boolVal*: bool
-    of vkInt:
+    of IntValue:
       intVal*: int64
-    of vkFloat:
+    of FloatValue:
       floatVal*: float64
-    of vkString:
+    of StringValue:
       strVal*: string
-    of vkArray:
+    of ArrayValue:
       arrayVal*: seq[Value]
-    of vkTable:
+    of TableValue:
       tableVal*: TableRef[string, Value]
-    of vkSet:
+    of SetValue:
       setVal*: seq[Value]
-    of vkObject:
+    of ObjectValue:
       objType*: string
       objFields*: TableRef[string, Value]
-    of vkProc:
+    of ProcValue:
       procName*: string
       procParams*: seq[string]
       procBody*: Node
       procClosure*: Scope
-    of vkNativeProc:
+    of NativeProcValue:
       nativeName*: string
       nativeProc*: NativeProc
-    of vkType:
+    of TypeValue:
       typeNameVal*: string
       typeFields*: seq[string]
-    of vkRange:
+    of RangeValue:
       rangeStart*: int64
       rangeEnd*: int64
       rangeInclusive*: bool
@@ -279,43 +279,43 @@ type
 
 # Value constructors
 proc nilValue*(): Value =
-  Value(kind: vkNil)
+  Value(kind: NilValue)
 
 proc boolValue*(b: bool): Value =
-  Value(kind: vkBool, boolVal: b)
+  Value(kind: BoolValue, boolVal: b)
 
 proc intValue*(i: int64): Value =
-  Value(kind: vkInt, intVal: i)
+  Value(kind: IntValue, intVal: i)
 
 proc floatValue*(f: float64): Value =
-  Value(kind: vkFloat, floatVal: f)
+  Value(kind: FloatValue, floatVal: f)
 
 proc stringValue*(s: string): Value =
-  Value(kind: vkString, strVal: s)
+  Value(kind: StringValue, strVal: s)
 
 proc arrayValue*(arr: seq[Value]): Value =
-  Value(kind: vkArray, arrayVal: arr)
+  Value(kind: ArrayValue, arrayVal: arr)
 
 proc tableValue*(): Value =
-  Value(kind: vkTable, tableVal: newTable[string, Value]())
+  Value(kind: TableValue, tableVal: newTable[string, Value]())
 
 proc setValue*(elems: seq[Value]): Value =
-  Value(kind: vkSet, setVal: elems)
+  Value(kind: SetValue, setVal: elems)
 
 proc objectValue*(typeName: string): Value =
-  Value(kind: vkObject, objType: typeName, objFields: newTable[string, Value]())
+  Value(kind: ObjectValue, objType: typeName, objFields: newTable[string, Value]())
 
 proc procValue*(name: string, params: seq[string], body: Node, closure: Scope): Value =
-  Value(kind: vkProc, procName: name, procParams: params, procBody: body, procClosure: closure)
+  Value(kind: ProcValue, procName: name, procParams: params, procBody: body, procClosure: closure)
 
 proc nativeProcValue*(name: string, p: NativeProc): Value =
-  Value(kind: vkNativeProc, nativeName: name, nativeProc: p)
+  Value(kind: NativeProcValue, nativeName: name, nativeProc: p)
 
 proc typeValue*(name: string, fields: seq[string]): Value =
-  Value(kind: vkType, typeNameVal: name, typeFields: fields)
+  Value(kind: TypeValue, typeNameVal: name, typeFields: fields)
 
 proc rangeValue*(start, stop: int64, inclusive: bool): Value =
-  Value(kind: vkRange, rangeStart: start, rangeEnd: stop, rangeInclusive: inclusive)
+  Value(kind: RangeValue, rangeStart: start, rangeEnd: stop, rangeInclusive: inclusive)
 
 # Scope operations
 proc newScope*(parent: Scope = nil): Scope =

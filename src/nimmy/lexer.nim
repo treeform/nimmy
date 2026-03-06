@@ -16,28 +16,28 @@ type
 
 const
   Keywords = {
-    "let": tkLet,
-    "var": tkVar,
-    "proc": tkProc,
-    "func": tkFunc,
-    "if": tkIf,
-    "elif": tkElif,
-    "else": tkElse,
-    "for": tkFor,
-    "while": tkWhile,
-    "break": tkBreak,
-    "continue": tkContinue,
-    "return": tkReturn,
-    "in": tkIn,
-    "not": tkNot,
-    "and": tkAnd,
-    "or": tkOr,
-    "type": tkType,
-    "object": tkObject,
-    "true": tkTrue,
-    "false": tkFalse,
-    "nil": tkNil,
-    "echo": tkEcho,
+    "let": LetToken,
+    "var": VarToken,
+    "proc": ProcToken,
+    "func": FuncToken,
+    "if": IfToken,
+    "elif": ElifToken,
+    "else": ElseToken,
+    "for": ForToken,
+    "while": WhileToken,
+    "break": BreakToken,
+    "continue": ContinueToken,
+    "return": ReturnToken,
+    "in": InToken,
+    "not": NotToken,
+    "and": AndToken,
+    "or": OrToken,
+    "type": TypeToken,
+    "object": ObjectToken,
+    "true": TrueToken,
+    "false": FalseToken,
+    "nil": NilToken,
+    "echo": EchoToken,
   }.toTable
 
 proc newLexer*(source: string): Lexer =
@@ -119,7 +119,7 @@ proc scanString(L: Lexer): Token =
     L.error("Unterminated string")
   
   discard L.advance()  # consume closing quote
-  result = L.makeToken(tkString, value, startLine, startCol)
+  result = L.makeToken(StringToken, value, startLine, startCol)
 
 proc scanNumber(L: Lexer): Token =
   let startLine = L.line
@@ -137,9 +137,9 @@ proc scanNumber(L: Lexer): Token =
       value.add(L.advance())
   
   if isFloat:
-    result = L.makeToken(tkFloat, value, startLine, startCol)
+    result = L.makeToken(FloatToken, value, startLine, startCol)
   else:
-    result = L.makeToken(tkInt, value, startLine, startCol)
+    result = L.makeToken(IntToken, value, startLine, startCol)
 
 proc scanIdentifier(L: Lexer): Token =
   let startLine = L.line
@@ -152,7 +152,7 @@ proc scanIdentifier(L: Lexer): Token =
   if Keywords.hasKey(value):
     result = L.makeToken(Keywords[value], value, startLine, startCol)
   else:
-    result = L.makeToken(tkIdent, value, startLine, startCol)
+    result = L.makeToken(IdentToken, value, startLine, startCol)
 
 proc measureIndent(L: Lexer): int =
   ## Count spaces at the start of the current line
@@ -192,10 +192,10 @@ proc nextToken*(L: Lexer): Token =
     
     if indent > currentIndent:
       L.indentStack.add(indent)
-      return L.makeToken(tkIndent, "", L.line, 1)
+      return L.makeToken(IndentToken, "", L.line, 1)
     elif indent < currentIndent:
       while L.indentStack.len > 1 and L.indentStack[^1] > indent:
-        L.pendingTokens.add(L.makeToken(tkDedent, "", L.line, 1))
+        L.pendingTokens.add(L.makeToken(DedentToken, "", L.line, 1))
         discard L.indentStack.pop()
       if L.indentStack[^1] != indent:
         L.error("Inconsistent indentation")
@@ -212,13 +212,13 @@ proc nextToken*(L: Lexer): Token =
   if L.isAtEnd:
     # Generate remaining dedents
     while L.indentStack.len > 1:
-      L.pendingTokens.add(L.makeToken(tkDedent, "", L.line, L.col))
+      L.pendingTokens.add(L.makeToken(DedentToken, "", L.line, L.col))
       discard L.indentStack.pop()
     if L.pendingTokens.len > 0:
       result = L.pendingTokens[0]
       L.pendingTokens.delete(0)
       return result
-    return L.makeToken(tkEof, "", L.line, L.col)
+    return L.makeToken(EofToken, "", L.line, L.col)
   
   let startLine = L.line
   let startCol = L.col
@@ -231,63 +231,63 @@ proc nextToken*(L: Lexer): Token =
   
   of '\n':
     L.atLineStart = true
-    return L.makeToken(tkNewline, "\\n", startLine, startCol)
+    return L.makeToken(NewlineToken, "\\n", startLine, startCol)
   
   of '"', '\'':
     L.pos -= 1
     L.col -= 1
     return L.scanString()
   
-  of '+': return L.makeToken(tkPlus, "+", startLine, startCol)
-  of '-': return L.makeToken(tkMinus, "-", startLine, startCol)
-  of '*': return L.makeToken(tkStar, "*", startLine, startCol)
-  of '/': return L.makeToken(tkSlash, "/", startLine, startCol)
-  of '%': return L.makeToken(tkPercent, "%", startLine, startCol)
-  of '&': return L.makeToken(tkAmp, "&", startLine, startCol)
-  of '$': return L.makeToken(tkDollar, "$", startLine, startCol)
+  of '+': return L.makeToken(PlusToken, "+", startLine, startCol)
+  of '-': return L.makeToken(MinusToken, "-", startLine, startCol)
+  of '*': return L.makeToken(StarToken, "*", startLine, startCol)
+  of '/': return L.makeToken(SlashToken, "/", startLine, startCol)
+  of '%': return L.makeToken(PercentToken, "%", startLine, startCol)
+  of '&': return L.makeToken(AmpToken, "&", startLine, startCol)
+  of '$': return L.makeToken(DollarToken, "$", startLine, startCol)
   
   of '=':
     if L.match('='):
-      return L.makeToken(tkEqEq, "==", startLine, startCol)
+      return L.makeToken(EqEqToken, "==", startLine, startCol)
     else:
-      return L.makeToken(tkEq, "=", startLine, startCol)
+      return L.makeToken(EqToken, "=", startLine, startCol)
   
   of '!':
     if L.match('='):
-      return L.makeToken(tkNotEq, "!=", startLine, startCol)
+      return L.makeToken(NotEqToken, "!=", startLine, startCol)
     else:
       L.error("Unexpected character '!'")
   
   of '<':
     if L.match('='):
-      return L.makeToken(tkLe, "<=", startLine, startCol)
+      return L.makeToken(LeToken, "<=", startLine, startCol)
     else:
-      return L.makeToken(tkLt, "<", startLine, startCol)
+      return L.makeToken(LtToken, "<", startLine, startCol)
   
   of '>':
     if L.match('='):
-      return L.makeToken(tkGe, ">=", startLine, startCol)
+      return L.makeToken(GeToken, ">=", startLine, startCol)
     else:
-      return L.makeToken(tkGt, ">", startLine, startCol)
+      return L.makeToken(GtToken, ">", startLine, startCol)
   
   of '.':
     if L.match('.'):
       if L.match('<'):
-        return L.makeToken(tkDotDotLt, "..<", startLine, startCol)
+        return L.makeToken(DotDotLtToken, "..<", startLine, startCol)
       else:
-        return L.makeToken(tkDotDot, "..", startLine, startCol)
+        return L.makeToken(DotDotToken, "..", startLine, startCol)
     else:
-      return L.makeToken(tkDot, ".", startLine, startCol)
+      return L.makeToken(DotToken, ".", startLine, startCol)
   
-  of '(': return L.makeToken(tkLParen, "(", startLine, startCol)
-  of ')': return L.makeToken(tkRParen, ")", startLine, startCol)
-  of '[': return L.makeToken(tkLBracket, "[", startLine, startCol)
-  of ']': return L.makeToken(tkRBracket, "]", startLine, startCol)
-  of '{': return L.makeToken(tkLBrace, "{", startLine, startCol)
-  of '}': return L.makeToken(tkRBrace, "}", startLine, startCol)
-  of ',': return L.makeToken(tkComma, ",", startLine, startCol)
-  of ':': return L.makeToken(tkColon, ":", startLine, startCol)
-  of ';': return L.makeToken(tkSemicolon, ";", startLine, startCol)
+  of '(': return L.makeToken(LParenToken, "(", startLine, startCol)
+  of ')': return L.makeToken(RParenToken, ")", startLine, startCol)
+  of '[': return L.makeToken(LBracketToken, "[", startLine, startCol)
+  of ']': return L.makeToken(RBracketToken, "]", startLine, startCol)
+  of '{': return L.makeToken(LBraceToken, "{", startLine, startCol)
+  of '}': return L.makeToken(RBraceToken, "}", startLine, startCol)
+  of ',': return L.makeToken(CommaToken, ",", startLine, startCol)
+  of ':': return L.makeToken(ColonToken, ":", startLine, startCol)
+  of ';': return L.makeToken(SemicolonToken, ";", startLine, startCol)
   
   else:
     if c.isDigit:
@@ -307,5 +307,5 @@ proc tokenize*(source: string): seq[Token] =
   while true:
     let tok = L.nextToken()
     result.add(tok)
-    if tok.kind == tkEof:
+    if tok.kind == EofToken:
       break

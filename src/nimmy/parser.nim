@@ -44,11 +44,11 @@ proc consume(P: Parser, kind: TokenKind, msg: string): Token =
   P.error(msg)
 
 proc skipNewlines(P: Parser) =
-  while P.check(tkNewline):
+  while P.check(NewlineToken):
     discard P.advance()
 
 proc skipTableLayout(P: Parser) =
-  while P.checkAny({tkNewline, tkIndent, tkDedent}):
+  while P.checkAny({NewlineToken, IndentToken, DedentToken}):
     discard P.advance()
 
 # Forward declarations
@@ -62,17 +62,17 @@ proc configKey(P: Parser): Node =
   let line = P.current.line
   let col = P.current.col
 
-  if P.match(tkIdent):
+  if P.match(IdentToken):
     return Node(
-      kind: nkStrLit,
+      kind: StrLitNode,
       line: line,
       col: col,
       strVal: P.previous.lexeme
     )
 
-  if P.match(tkString):
+  if P.match(StringToken):
     return Node(
-      kind: nkStrLit,
+      kind: StrLitNode,
       line: line,
       col: col,
       strVal: P.previous.lexeme
@@ -85,16 +85,16 @@ proc indentedTable(P: Parser, line, col: int): Node =
     keys: seq[Node] = @[]
     vals: seq[Node] = @[]
 
-  discard P.consume(tkIndent, "Expected indented table")
+  discard P.consume(IndentToken, "Expected indented table")
   P.skipNewlines()
 
-  while not P.check(tkDedent) and not P.check(tkEof):
+  while not P.check(DedentToken) and not P.check(EofToken):
     let key = P.configKey()
-    discard P.consume(tkColon, "Expected ':' after config key")
+    discard P.consume(ColonToken, "Expected ':' after config key")
 
     var value: Node = nil
-    if P.match(tkNewline):
-      if P.check(tkIndent):
+    if P.match(NewlineToken):
+      if P.check(IndentToken):
         value = P.indentedTable(key.line, key.col)
       else:
         P.error("Expected value or indented table after ':'")
@@ -105,11 +105,11 @@ proc indentedTable(P: Parser, line, col: int): Node =
     vals.add(value)
     P.skipNewlines()
 
-  if P.check(tkDedent):
+  if P.check(DedentToken):
     discard P.advance()
 
   Node(
-    kind: nkTable,
+    kind: TableNode,
     line: line,
     col: col,
     tableKeys: keys,
@@ -120,8 +120,8 @@ proc valueExpression(P: Parser): Node =
   let line = P.current.line
   let col = P.current.col
 
-  if P.match(tkNewline):
-    if P.check(tkIndent):
+  if P.match(NewlineToken):
+    if P.check(IndentToken):
       return P.indentedTable(line, col)
     P.error("Expected expression after newline")
 
@@ -132,107 +132,107 @@ proc primary(P: Parser): Node =
   let line = P.current.line
   let col = P.current.col
   
-  if P.match(tkInt):
-    return Node(kind: nkIntLit, line: line, col: col, 
+  if P.match(IntToken):
+    return Node(kind: IntLitNode, line: line, col: col, 
                 intVal: parseInt(P.previous.lexeme))
   
-  if P.match(tkFloat):
-    return Node(kind: nkFloatLit, line: line, col: col,
+  if P.match(FloatToken):
+    return Node(kind: FloatLitNode, line: line, col: col,
                 floatVal: parseFloat(P.previous.lexeme))
   
-  if P.match(tkString):
-    return Node(kind: nkStrLit, line: line, col: col,
+  if P.match(StringToken):
+    return Node(kind: StrLitNode, line: line, col: col,
                 strVal: P.previous.lexeme)
   
-  if P.match(tkTrue):
-    return Node(kind: nkBoolLit, line: line, col: col, boolVal: true)
+  if P.match(TrueToken):
+    return Node(kind: BoolLitNode, line: line, col: col, boolVal: true)
   
-  if P.match(tkFalse):
-    return Node(kind: nkBoolLit, line: line, col: col, boolVal: false)
+  if P.match(FalseToken):
+    return Node(kind: BoolLitNode, line: line, col: col, boolVal: false)
   
-  if P.match(tkNil):
-    return Node(kind: nkNilLit, line: line, col: col)
+  if P.match(NilToken):
+    return Node(kind: NilLitNode, line: line, col: col)
   
-  if P.match(tkIdent):
-    return Node(kind: nkIdent, line: line, col: col, name: P.previous.lexeme)
+  if P.match(IdentToken):
+    return Node(kind: IdentNode, line: line, col: col, name: P.previous.lexeme)
   
-  if P.match(tkLParen):
+  if P.match(LParenToken):
     let expr = P.expression()
-    discard P.consume(tkRParen, "Expected ')' after expression")
+    discard P.consume(RParenToken, "Expected ')' after expression")
     return expr
   
-  if P.match(tkLBracket):
+  if P.match(LBracketToken):
     # Array literal
     var elems: seq[Node] = @[]
 
     P.skipTableLayout()
 
-    if not P.check(tkRBracket):
+    if not P.check(RBracketToken):
       elems.add(P.valueExpression())
       P.skipTableLayout()
 
-      while P.match(tkComma):
+      while P.match(CommaToken):
         P.skipTableLayout()
-        if P.check(tkRBracket):
+        if P.check(RBracketToken):
           break
         elems.add(P.valueExpression())
         P.skipTableLayout()
 
-    discard P.consume(tkRBracket, "Expected ']' after array elements")
-    return Node(kind: nkArray, line: line, col: col, arrayElems: elems)
+    discard P.consume(RBracketToken, "Expected ']' after array elements")
+    return Node(kind: ArrayNode, line: line, col: col, arrayElems: elems)
   
-  if P.match(tkLBrace):
+  if P.match(LBraceToken):
     # Could be a table {key: val} or a set {val, val}
     P.skipTableLayout()
 
-    if P.check(tkRBrace):
+    if P.check(RBraceToken):
       # Empty set {}
       discard P.advance()
-      return Node(kind: nkSet, line: line, col: col, setElems: @[])
+      return Node(kind: SetNode, line: line, col: col, setElems: @[])
 
     let firstExpr = P.expression()
     P.skipTableLayout()
 
-    if P.check(tkColon):
+    if P.check(ColonToken):
       # It's a table {key: val, ...}
       discard P.advance()
       var keys = @[firstExpr]
       var vals = @[P.valueExpression()]
       P.skipTableLayout()
 
-      while P.match(tkComma):
+      while P.match(CommaToken):
         P.skipTableLayout()
-        if P.check(tkRBrace):
+        if P.check(RBraceToken):
           break
         keys.add(P.expression())
         P.skipTableLayout()
-        discard P.consume(tkColon, "Expected ':' after table key")
+        discard P.consume(ColonToken, "Expected ':' after table key")
         vals.add(P.valueExpression())
         P.skipTableLayout()
 
-      discard P.consume(tkRBrace, "Expected '}' after table entries")
-      return Node(kind: nkTable, line: line, col: col, tableKeys: keys, tableVals: vals)
+      discard P.consume(RBraceToken, "Expected '}' after table entries")
+      return Node(kind: TableNode, line: line, col: col, tableKeys: keys, tableVals: vals)
     else:
       # It's a set {val, val, ...}
       var elems = @[firstExpr]
       P.skipTableLayout()
 
-      while P.match(tkComma):
+      while P.match(CommaToken):
         P.skipTableLayout()
-        if P.check(tkRBrace):
+        if P.check(RBraceToken):
           break
         elems.add(P.expression())
         P.skipTableLayout()
 
-      discard P.consume(tkRBrace, "Expected '}' after set elements")
-      return Node(kind: nkSet, line: line, col: col, setElems: elems)
+      discard P.consume(RBraceToken, "Expected '}' after set elements")
+      return Node(kind: SetNode, line: line, col: col, setElems: elems)
 
   P.error(fmt"Expected expression, got {P.current.kind}")
 
 # Check if current token can start a command-style argument
 proc canStartCommandArg(P: Parser): bool =
-  P.current.kind in {tkInt, tkFloat, tkString, tkTrue, tkFalse, tkNil,
-                      tkIdent, tkLParen, tkLBracket, tkLBrace}
+  P.current.kind in {IntToken, FloatToken, StringToken, TrueToken, FalseToken, NilToken,
+                      IdentToken, LParenToken, LBracketToken, LBraceToken}
 
 # Call, indexing, and command syntax
 proc postfix(P: Parser): Node =
@@ -242,38 +242,38 @@ proc postfix(P: Parser): Node =
     let line = P.current.line
     let col = P.current.col
     
-    if P.match(tkLParen):
+    if P.match(LParenToken):
       # Function call with parentheses
       var args: seq[Node] = @[]
-      if not P.check(tkRParen):
+      if not P.check(RParenToken):
         args.add(P.expression())
-        while P.match(tkComma):
+        while P.match(CommaToken):
           args.add(P.expression())
-      discard P.consume(tkRParen, "Expected ')' after arguments")
-      result = Node(kind: nkCall, line: line, col: col, callee: result, args: args)
-    elif P.match(tkLBracket):
+      discard P.consume(RParenToken, "Expected ')' after arguments")
+      result = Node(kind: CallNode, line: line, col: col, callee: result, args: args)
+    elif P.match(LBracketToken):
       # Index access
       let index = P.expression()
-      discard P.consume(tkRBracket, "Expected ']' after index")
-      result = Node(kind: nkIndex, line: line, col: col, indexee: result, index: index)
-    elif P.match(tkDot):
+      discard P.consume(RBracketToken, "Expected ']' after index")
+      result = Node(kind: IndexNode, line: line, col: col, indexee: result, index: index)
+    elif P.match(DotToken):
       # Field access or UFCS method call
-      let field = P.consume(tkIdent, "Expected field name after '.'")
-      result = Node(kind: nkDot, line: line, col: col, dotLeft: result, dotField: field.lexeme)
-    elif result.kind == nkIdent and P.canStartCommandArg():
+      let field = P.consume(IdentToken, "Expected field name after '.'")
+      result = Node(kind: DotNode, line: line, col: col, dotLeft: result, dotField: field.lexeme)
+    elif result.kind == IdentNode and P.canStartCommandArg():
       # Command syntax: ident arg1, arg2, ...
       var args: seq[Node] = @[]
       args.add(P.expression())
-      while P.match(tkComma):
+      while P.match(CommaToken):
         args.add(P.expression())
-      result = Node(kind: nkCall, line: result.line, col: result.col, callee: result, args: args)
-    elif result.kind == nkDot and P.canStartCommandArg():
+      result = Node(kind: CallNode, line: result.line, col: result.col, callee: result, args: args)
+    elif result.kind == DotNode and P.canStartCommandArg():
       # UFCS command syntax: obj.method arg1, arg2, ...
       var args: seq[Node] = @[]
       args.add(P.expression())
-      while P.match(tkComma):
+      while P.match(CommaToken):
         args.add(P.expression())
-      result = Node(kind: nkCall, line: result.line, col: result.col, callee: result, args: args)
+      result = Node(kind: CallNode, line: result.line, col: result.col, callee: result, args: args)
     else:
       break
 
@@ -282,14 +282,14 @@ proc unary(P: Parser): Node =
   let line = P.current.line
   let col = P.current.col
   
-  if P.match(tkMinus):
-    return Node(kind: nkUnaryOp, line: line, col: col, unOp: "-", unOperand: P.unary())
+  if P.match(MinusToken):
+    return Node(kind: UnaryOpNode, line: line, col: col, unOp: "-", unOperand: P.unary())
   
-  if P.match(tkNot):
-    return Node(kind: nkUnaryOp, line: line, col: col, unOp: "not", unOperand: P.unary())
+  if P.match(NotToken):
+    return Node(kind: UnaryOpNode, line: line, col: col, unOp: "not", unOperand: P.unary())
   
-  if P.match(tkDollar):
-    return Node(kind: nkUnaryOp, line: line, col: col, unOp: "$", unOperand: P.unary())
+  if P.match(DollarToken):
+    return Node(kind: UnaryOpNode, line: line, col: col, unOp: "$", unOperand: P.unary())
   
   return P.postfix()
 
@@ -300,78 +300,78 @@ proc rangeExpr(P: Parser): Node =
   let line = P.current.line
   let col = P.current.col
   
-  if P.match(tkDotDot):
-    return Node(kind: nkRange, line: line, col: col,
+  if P.match(DotDotToken):
+    return Node(kind: RangeNode, line: line, col: col,
                 rangeStart: result, rangeEnd: P.unary(), rangeInclusive: true)
   
-  if P.match(tkDotDotLt):
-    return Node(kind: nkRange, line: line, col: col,
+  if P.match(DotDotLtToken):
+    return Node(kind: RangeNode, line: line, col: col,
                 rangeStart: result, rangeEnd: P.unary(), rangeInclusive: false)
 
 # Multiplication and division
 proc factor(P: Parser): Node =
   result = P.rangeExpr()
   
-  while P.checkAny({tkStar, tkSlash, tkPercent}):
+  while P.checkAny({StarToken, SlashToken, PercentToken}):
     let line = P.current.line
     let col = P.current.col
     let op = P.advance().lexeme
-    result = Node(kind: nkBinaryOp, line: line, col: col,
+    result = Node(kind: BinaryOpNode, line: line, col: col,
                   binOp: op, binLeft: result, binRight: P.rangeExpr())
 
 # Addition and subtraction
 proc term(P: Parser): Node =
   result = P.factor()
   
-  while P.checkAny({tkPlus, tkMinus, tkAmp}):
+  while P.checkAny({PlusToken, MinusToken, AmpToken}):
     let line = P.current.line
     let col = P.current.col
     let op = P.advance().lexeme
-    result = Node(kind: nkBinaryOp, line: line, col: col,
+    result = Node(kind: BinaryOpNode, line: line, col: col,
                   binOp: op, binLeft: result, binRight: P.factor())
 
 # Comparison
 proc comparison(P: Parser): Node =
   result = P.term()
   
-  while P.checkAny({tkLt, tkLe, tkGt, tkGe, tkIn}):
+  while P.checkAny({LtToken, LeToken, GtToken, GeToken, InToken}):
     let line = P.current.line
     let col = P.current.col
     let op = P.advance().lexeme
-    result = Node(kind: nkBinaryOp, line: line, col: col,
+    result = Node(kind: BinaryOpNode, line: line, col: col,
                   binOp: op, binLeft: result, binRight: P.term())
 
 # Equality
 proc equality(P: Parser): Node =
   result = P.comparison()
   
-  while P.checkAny({tkEqEq, tkNotEq}):
+  while P.checkAny({EqEqToken, NotEqToken}):
     let line = P.current.line
     let col = P.current.col
     let op = P.advance().lexeme
-    result = Node(kind: nkBinaryOp, line: line, col: col,
+    result = Node(kind: BinaryOpNode, line: line, col: col,
                   binOp: op, binLeft: result, binRight: P.comparison())
 
 # Logical AND
 proc logicalAnd(P: Parser): Node =
   result = P.equality()
   
-  while P.check(tkAnd):
+  while P.check(AndToken):
     let line = P.current.line
     let col = P.current.col
     discard P.advance()
-    result = Node(kind: nkBinaryOp, line: line, col: col,
+    result = Node(kind: BinaryOpNode, line: line, col: col,
                   binOp: "and", binLeft: result, binRight: P.equality())
 
 # Logical OR
 proc logicalOr(P: Parser): Node =
   result = P.logicalAnd()
   
-  while P.check(tkOr):
+  while P.check(OrToken):
     let line = P.current.line
     let col = P.current.col
     discard P.advance()
-    result = Node(kind: nkBinaryOp, line: line, col: col,
+    result = Node(kind: BinaryOpNode, line: line, col: col,
                   binOp: "or", binLeft: result, binRight: P.logicalAnd())
 
 proc expression(P: Parser): Node =
@@ -384,42 +384,42 @@ proc parseBlock(P: Parser): Node =
   var stmts: seq[Node] = @[]
   
   P.skipNewlines()
-  discard P.consume(tkIndent, "Expected indented block")
+  discard P.consume(IndentToken, "Expected indented block")
   P.skipNewlines()
   
-  while not P.check(tkDedent) and not P.check(tkEof):
+  while not P.check(DedentToken) and not P.check(EofToken):
     stmts.add(P.statement())
     P.skipNewlines()
   
-  if P.check(tkDedent):
+  if P.check(DedentToken):
     discard P.advance()
   
-  Node(kind: nkBlock, line: line, col: col, stmts: stmts)
+  Node(kind: BlockNode, line: line, col: col, stmts: stmts)
 
 # Let statement
 proc letStatement(P: Parser): Node =
   let line = P.previous.line
   let col = P.previous.col
   
-  let name = P.consume(tkIdent, "Expected variable name").lexeme
-  discard P.consume(tkEq, "Expected '=' after variable name")
+  let name = P.consume(IdentToken, "Expected variable name").lexeme
+  discard P.consume(EqToken, "Expected '=' after variable name")
   let value = P.valueExpression()
   
-  Node(kind: nkLetStmt, line: line, col: col, varName: name, varValue: value)
+  Node(kind: LetStmtNode, line: line, col: col, varName: name, varValue: value)
 
 # Var statement
 proc varStatement(P: Parser): Node =
   let line = P.previous.line
   let col = P.previous.col
   
-  let name = P.consume(tkIdent, "Expected variable name").lexeme
+  let name = P.consume(IdentToken, "Expected variable name").lexeme
   var value: Node = nil
-  if P.match(tkEq):
+  if P.match(EqToken):
     value = P.valueExpression()
   else:
-    value = Node(kind: nkNilLit, line: line, col: col)
+    value = Node(kind: NilLitNode, line: line, col: col)
   
-  Node(kind: nkVarStmt, line: line, col: col, varName: name, varValue: value)
+  Node(kind: VarStmtNode, line: line, col: col, varName: name, varValue: value)
 
 # If statement
 proc ifStatement(P: Parser): Node =
@@ -427,28 +427,28 @@ proc ifStatement(P: Parser): Node =
   let col = P.previous.col
   
   let cond = P.expression()
-  discard P.consume(tkColon, "Expected ':' after if condition")
+  discard P.consume(ColonToken, "Expected ':' after if condition")
   let body = P.parseBlock()
   
   var elifs: seq[Node] = @[]
   var elseBody: Node = nil
   
   P.skipNewlines()
-  while P.match(tkElif):
+  while P.match(ElifToken):
     let elifLine = P.previous.line
     let elifCol = P.previous.col
     let elifCond = P.expression()
-    discard P.consume(tkColon, "Expected ':' after elif condition")
+    discard P.consume(ColonToken, "Expected ':' after elif condition")
     let elifBody = P.parseBlock()
-    elifs.add(Node(kind: nkElifBranch, line: elifLine, col: elifCol,
+    elifs.add(Node(kind: ElifBranchNode, line: elifLine, col: elifCol,
                    elifCond: elifCond, elifBody: elifBody))
     P.skipNewlines()
   
-  if P.match(tkElse):
-    discard P.consume(tkColon, "Expected ':' after else")
+  if P.match(ElseToken):
+    discard P.consume(ColonToken, "Expected ':' after else")
     elseBody = P.parseBlock()
   
-  Node(kind: nkIfStmt, line: line, col: col,
+  Node(kind: IfStmtNode, line: line, col: col,
        ifCond: cond, ifBody: body, elifBranches: elifs, elseBranch: elseBody)
 
 # For statement
@@ -456,13 +456,13 @@ proc forStatement(P: Parser): Node =
   let line = P.previous.line
   let col = P.previous.col
   
-  let varName = P.consume(tkIdent, "Expected loop variable name").lexeme
-  discard P.consume(tkIn, "Expected 'in' after loop variable")
+  let varName = P.consume(IdentToken, "Expected loop variable name").lexeme
+  discard P.consume(InToken, "Expected 'in' after loop variable")
   let iter = P.expression()
-  discard P.consume(tkColon, "Expected ':' after for iterator")
+  discard P.consume(ColonToken, "Expected ':' after for iterator")
   let body = P.parseBlock()
   
-  Node(kind: nkForStmt, line: line, col: col,
+  Node(kind: ForStmtNode, line: line, col: col,
        forVar: varName, forIter: iter, forBody: body)
 
 # While statement
@@ -471,30 +471,30 @@ proc whileStatement(P: Parser): Node =
   let col = P.previous.col
   
   let cond = P.expression()
-  discard P.consume(tkColon, "Expected ':' after while condition")
+  discard P.consume(ColonToken, "Expected ':' after while condition")
   let body = P.parseBlock()
   
-  Node(kind: nkWhileStmt, line: line, col: col, whileCond: cond, whileBody: body)
+  Node(kind: WhileStmtNode, line: line, col: col, whileCond: cond, whileBody: body)
 
 # Proc definition
 proc procDef(P: Parser): Node =
   let line = P.previous.line
   let col = P.previous.col
   
-  let name = P.consume(tkIdent, "Expected procedure name").lexeme
-  discard P.consume(tkLParen, "Expected '(' after procedure name")
+  let name = P.consume(IdentToken, "Expected procedure name").lexeme
+  discard P.consume(LParenToken, "Expected '(' after procedure name")
   
   var params: seq[string] = @[]
-  if not P.check(tkRParen):
-    params.add(P.consume(tkIdent, "Expected parameter name").lexeme)
-    while P.match(tkComma):
-      params.add(P.consume(tkIdent, "Expected parameter name").lexeme)
+  if not P.check(RParenToken):
+    params.add(P.consume(IdentToken, "Expected parameter name").lexeme)
+    while P.match(CommaToken):
+      params.add(P.consume(IdentToken, "Expected parameter name").lexeme)
   
-  discard P.consume(tkRParen, "Expected ')' after parameters")
-  discard P.consume(tkEq, "Expected '=' after procedure signature")
+  discard P.consume(RParenToken, "Expected ')' after parameters")
+  discard P.consume(EqToken, "Expected '=' after procedure signature")
   let body = P.parseBlock()
   
-  Node(kind: nkProcDef, line: line, col: col,
+  Node(kind: ProcDefNode, line: line, col: col,
        procName: name, procParams: params, procBody: body)
 
 # Type definition
@@ -502,27 +502,27 @@ proc typeDef(P: Parser): Node =
   let line = P.previous.line
   let col = P.previous.col
   
-  let name = P.consume(tkIdent, "Expected type name").lexeme
-  discard P.consume(tkEq, "Expected '=' after type name")
-  discard P.consume(tkObject, "Expected 'object' after '='")
+  let name = P.consume(IdentToken, "Expected type name").lexeme
+  discard P.consume(EqToken, "Expected '=' after type name")
+  discard P.consume(ObjectToken, "Expected 'object' after '='")
   
   P.skipNewlines()
-  discard P.consume(tkIndent, "Expected indented block for object fields")
+  discard P.consume(IndentToken, "Expected indented block for object fields")
   P.skipNewlines()
   
   var fields: seq[Node] = @[]
-  while not P.check(tkDedent) and not P.check(tkEof):
+  while not P.check(DedentToken) and not P.check(EofToken):
     let fieldLine = P.current.line
     let fieldCol = P.current.col
-    let fieldName = P.consume(tkIdent, "Expected field name").lexeme
-    fields.add(Node(kind: nkFieldDef, line: fieldLine, col: fieldCol, fieldName: fieldName))
+    let fieldName = P.consume(IdentToken, "Expected field name").lexeme
+    fields.add(Node(kind: FieldDefNode, line: fieldLine, col: fieldCol, fieldName: fieldName))
     P.skipNewlines()
   
-  if P.check(tkDedent):
+  if P.check(DedentToken):
     discard P.advance()
   
-  let objDef = Node(kind: nkObjectDef, line: line, col: col, objectFields: fields)
-  Node(kind: nkTypeDef, line: line, col: col, typeName: name, typeBody: objDef)
+  let objDef = Node(kind: ObjectDefNode, line: line, col: col, objectFields: fields)
+  Node(kind: TypeDefNode, line: line, col: col, typeName: name, typeBody: objDef)
 
 # Return statement
 proc returnStatement(P: Parser): Node =
@@ -530,10 +530,10 @@ proc returnStatement(P: Parser): Node =
   let col = P.previous.col
   
   var value: Node = nil
-  if not P.check(tkNewline) and not P.check(tkEof) and not P.check(tkDedent):
+  if not P.check(NewlineToken) and not P.check(EofToken) and not P.check(DedentToken):
     value = P.expression()
   
-  Node(kind: nkReturnStmt, line: line, col: col, returnValue: value)
+  Node(kind: ReturnStmtNode, line: line, col: col, returnValue: value)
 
 # Echo statement
 proc echoStatement(P: Parser): Node =
@@ -541,12 +541,12 @@ proc echoStatement(P: Parser): Node =
   let col = P.previous.col
   
   var args: seq[Node] = @[]
-  if not P.check(tkNewline) and not P.check(tkEof):
+  if not P.check(NewlineToken) and not P.check(EofToken):
     args.add(P.expression())
-    while P.match(tkComma):
+    while P.match(CommaToken):
       args.add(P.expression())
   
-  Node(kind: nkEchoStmt, line: line, col: col, echoArgs: args)
+  Node(kind: EchoStmtNode, line: line, col: col, echoArgs: args)
 
 # Expression statement or assignment
 proc expressionStatement(P: Parser): Node =
@@ -554,10 +554,10 @@ proc expressionStatement(P: Parser): Node =
   let col = P.current.col
   let expr = P.expression()
   
-  if P.match(tkEq):
+  if P.match(EqToken):
     # Assignment
     let value = P.valueExpression()
-    return Node(kind: nkAssign, line: line, col: col,
+    return Node(kind: AssignNode, line: line, col: col,
                 assignTarget: expr, assignValue: value)
   
   return expr
@@ -565,37 +565,37 @@ proc expressionStatement(P: Parser): Node =
 proc statement(P: Parser): Node =
   P.skipNewlines()
   
-  if P.match(tkLet):
+  if P.match(LetToken):
     return P.letStatement()
   
-  if P.match(tkVar):
+  if P.match(VarToken):
     return P.varStatement()
   
-  if P.match(tkIf):
+  if P.match(IfToken):
     return P.ifStatement()
   
-  if P.match(tkFor):
+  if P.match(ForToken):
     return P.forStatement()
   
-  if P.match(tkWhile):
+  if P.match(WhileToken):
     return P.whileStatement()
   
-  if P.match(tkProc) or P.match(tkFunc):
+  if P.match(ProcToken) or P.match(FuncToken):
     return P.procDef()
   
-  if P.match(tkType):
+  if P.match(TypeToken):
     return P.typeDef()
   
-  if P.match(tkReturn):
+  if P.match(ReturnToken):
     return P.returnStatement()
   
-  if P.match(tkBreak):
-    return Node(kind: nkBreakStmt, line: P.previous.line, col: P.previous.col)
+  if P.match(BreakToken):
+    return Node(kind: BreakStmtNode, line: P.previous.line, col: P.previous.col)
   
-  if P.match(tkContinue):
-    return Node(kind: nkContinueStmt, line: P.previous.line, col: P.previous.col)
+  if P.match(ContinueToken):
+    return Node(kind: ContinueStmtNode, line: P.previous.line, col: P.previous.col)
   
-  if P.match(tkEcho):
+  if P.match(EchoToken):
     return P.echoStatement()
   
   return P.expressionStatement()
@@ -607,8 +607,8 @@ proc parse*(source: string): Node =
   var stmts: seq[Node] = @[]
   
   P.skipNewlines()
-  while not P.check(tkEof):
+  while not P.check(EofToken):
     stmts.add(P.statement())
     P.skipNewlines()
   
-  Node(kind: nkProgram, line: line, col: col, stmts: stmts)
+  Node(kind: ProgramNode, line: line, col: col, stmts: stmts)

@@ -32,14 +32,14 @@ proc runInteractiveTests*(): tuple[passed: int, failed: int] =
     let myvm = newVM()
     let res = myvm.runInteractive("1 + 2")
     doAssert res.success
-    doAssert res.value.kind == vkInt
+    doAssert res.value.kind == IntValue
     doAssert res.value.intVal == 3
   
   test "String expression":
     let myvm = newVM()
     let res = myvm.runInteractive("\"hello\"")
     doAssert res.success
-    doAssert res.value.kind == vkString
+    doAssert res.value.kind == StringValue
     doAssert res.value.strVal == "hello"
   
   test "Variable lookup in current scope":
@@ -59,7 +59,7 @@ let y = 10
     # Now query the variable interactively
     let res = myvm.runInteractive("x")
     doAssert res.success
-    doAssert res.value.kind == vkInt
+    doAssert res.value.kind == IntValue
     doAssert res.value.intVal == 42
   
   test "Expression with variables":
@@ -75,7 +75,7 @@ let b = 3
     
     let res = myvm.runInteractive("a + b")
     doAssert res.success
-    doAssert res.value.kind == vkInt
+    doAssert res.value.kind == IntValue
     doAssert res.value.intVal == 8
   
   test "Interactive during mid-execution":
@@ -125,7 +125,7 @@ let x = 5"""
     # Call the function interactively
     let res = myvm.runInteractive("double(x)")
     doAssert res.success
-    doAssert res.value.kind == vkInt
+    doAssert res.value.kind == IntValue
     doAssert res.value.intVal == 10
   
   test "Interactive echo":
@@ -211,7 +211,7 @@ let r = foo()"""
     # We're now inside the function - query local variable
     let res = myvm.runInteractive("local")
     doAssert res.success
-    doAssert res.value.kind == vkInt
+    doAssert res.value.kind == IntValue
     doAssert res.value.intVal == 99
   
   test "Interactive error does not stop VM":
@@ -369,7 +369,7 @@ let x = 1"""
     let myvm = newVM()
     let res = myvm.runInteractive("")
     doAssert res.success
-    doAssert res.value.kind == vkNil
+    doAssert res.value.kind == NilValue
   
   test "Whitespace only input":
     let myvm = newVM()

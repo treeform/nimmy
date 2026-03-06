@@ -13,43 +13,43 @@ proc `$`*(v: Value): string =
   if v.isNil:
     return "nil"
   case v.kind
-  of vkNil:
+  of NilValue:
     result = "nil"
-  of vkBool:
+  of BoolValue:
     result = $v.boolVal
-  of vkInt:
+  of IntValue:
     result = $v.intVal
-  of vkFloat:
+  of FloatValue:
     result = $v.floatVal
-  of vkString:
+  of StringValue:
     result = v.strVal
-  of vkArray:
+  of ArrayValue:
     var parts: seq[string]
     for elem in v.arrayVal:
       parts.add(valueRepr(elem))
     result = "[" & parts.join(", ") & "]"
-  of vkTable:
+  of TableValue:
     var parts: seq[string]
     for k, val in v.tableVal:
       parts.add("\"" & k & "\": " & valueRepr(val))
     result = "{" & parts.join(", ") & "}"
-  of vkSet:
+  of SetValue:
     var parts: seq[string]
     for elem in v.setVal:
       parts.add(valueRepr(elem))
     result = "{" & parts.join(", ") & "}"
-  of vkObject:
+  of ObjectValue:
     var parts: seq[string]
     for k, val in v.objFields:
       parts.add(fmt"{k}: {valueRepr(val)}")
     result = fmt"{v.objType}(" & parts.join(", ") & ")"
-  of vkProc:
+  of ProcValue:
     result = fmt"<proc {v.procName}>"
-  of vkNativeProc:
+  of NativeProcValue:
     result = fmt"<native proc {v.nativeName}>"
-  of vkType:
+  of TypeValue:
     result = fmt"<type {v.typeNameVal}>"
-  of vkRange:
+  of RangeValue:
     if v.rangeInclusive:
       result = fmt"{v.rangeStart}..{v.rangeEnd}"
     else:
@@ -60,7 +60,7 @@ proc valueRepr*(v: Value): string =
   if v.isNil:
     return "nil"
   case v.kind
-  of vkString:
+  of StringValue:
     "\"" & v.strVal & "\""
   else:
     $v
@@ -70,27 +70,27 @@ proc isTruthy*(v: Value): bool =
   if v.isNil:
     return false
   case v.kind
-  of vkNil:
+  of NilValue:
     result = false
-  of vkBool:
+  of BoolValue:
     result = v.boolVal
-  of vkInt:
+  of IntValue:
     result = v.intVal != 0
-  of vkFloat:
+  of FloatValue:
     result = v.floatVal != 0.0
-  of vkString:
+  of StringValue:
     result = v.strVal.len > 0
-  of vkArray:
+  of ArrayValue:
     result = v.arrayVal.len > 0
-  of vkTable:
+  of TableValue:
     result = v.tableVal.len > 0
-  of vkSet:
+  of SetValue:
     result = v.setVal.len > 0
-  of vkObject:
+  of ObjectValue:
     result = true
-  of vkProc, vkNativeProc, vkType:
+  of ProcValue, NativeProcValue, TypeValue:
     result = true
-  of vkRange:
+  of RangeValue:
     result = true
 
 # Equality check
@@ -101,30 +101,30 @@ proc equals*(a, b: Value): bool =
     return false
   if a.kind != b.kind:
     # Allow int/float comparison
-    if a.kind == vkInt and b.kind == vkFloat:
+    if a.kind == IntValue and b.kind == FloatValue:
       return a.intVal.float64 == b.floatVal
-    if a.kind == vkFloat and b.kind == vkInt:
+    if a.kind == FloatValue and b.kind == IntValue:
       return a.floatVal == b.intVal.float64
     return false
   case a.kind
-  of vkNil:
+  of NilValue:
     result = true
-  of vkBool:
+  of BoolValue:
     result = a.boolVal == b.boolVal
-  of vkInt:
+  of IntValue:
     result = a.intVal == b.intVal
-  of vkFloat:
+  of FloatValue:
     result = a.floatVal == b.floatVal
-  of vkString:
+  of StringValue:
     result = a.strVal == b.strVal
-  of vkArray:
+  of ArrayValue:
     if a.arrayVal.len != b.arrayVal.len:
       return false
     for i in 0..<a.arrayVal.len:
       if not equals(a.arrayVal[i], b.arrayVal[i]):
         return false
     result = true
-  of vkSet:
+  of SetValue:
     if a.setVal.len != b.setVal.len:
       return false
     # Check that all elements in a are in b
@@ -144,24 +144,24 @@ proc equals*(a, b: Value): bool =
 # Comparison (for < > <= >=)
 proc compare*(a, b: Value): int =
   ## Returns -1 if a < b, 0 if a == b, 1 if a > b
-  if a.kind == vkInt and b.kind == vkInt:
+  if a.kind == IntValue and b.kind == IntValue:
     return cmp(a.intVal, b.intVal)
-  if a.kind == vkFloat and b.kind == vkFloat:
+  if a.kind == FloatValue and b.kind == FloatValue:
     return cmp(a.floatVal, b.floatVal)
-  if a.kind == vkInt and b.kind == vkFloat:
+  if a.kind == IntValue and b.kind == FloatValue:
     return cmp(a.intVal.float64, b.floatVal)
-  if a.kind == vkFloat and b.kind == vkInt:
+  if a.kind == FloatValue and b.kind == IntValue:
     return cmp(a.floatVal, b.intVal.float64)
-  if a.kind == vkString and b.kind == vkString:
+  if a.kind == StringValue and b.kind == StringValue:
     return cmp(a.strVal, b.strVal)
   raise newException(RuntimeError, "Cannot compare " & typeName(a) & " and " & typeName(b))
 
 # Convert Value to float for arithmetic
 proc toFloat*(v: Value): float64 =
   case v.kind
-  of vkInt:
+  of IntValue:
     result = v.intVal.float64
-  of vkFloat:
+  of FloatValue:
     result = v.floatVal
   else:
     raise newException(RuntimeError, fmt"Cannot convert {v.kind} to float")
@@ -169,9 +169,9 @@ proc toFloat*(v: Value): float64 =
 # Convert Value to int
 proc toInt*(v: Value): int64 =
   case v.kind
-  of vkInt:
+  of IntValue:
     result = v.intVal
-  of vkFloat:
+  of FloatValue:
     result = v.floatVal.int64
   else:
     raise newException(RuntimeError, fmt"Cannot convert {v.kind} to int")
@@ -181,19 +181,19 @@ proc typeName*(v: Value): string =
   if v.isNil:
     return "nil"
   case v.kind
-  of vkNil: "nil"
-  of vkBool: "bool"
-  of vkInt: "int"
-  of vkFloat: "float"
-  of vkString: "string"
-  of vkArray: "array"
-  of vkTable: "table"
-  of vkSet: "set"
-  of vkObject: v.objType
-  of vkProc: "proc"
-  of vkNativeProc: "native proc"
-  of vkType: "type"
-  of vkRange: "range"
+  of NilValue: "nil"
+  of BoolValue: "bool"
+  of IntValue: "int"
+  of FloatValue: "float"
+  of StringValue: "string"
+  of ArrayValue: "array"
+  of TableValue: "table"
+  of SetValue: "set"
+  of ObjectValue: v.objType
+  of ProcValue: "proc"
+  of NativeProcValue: "native proc"
+  of TypeValue: "type"
+  of RangeValue: "range"
 
 # Node to string for debugging
 proc `$`*(n: Node): string =
@@ -201,19 +201,19 @@ proc `$`*(n: Node): string =
     return "<nil>"
   result = $n.kind
   case n.kind
-  of nkIntLit:
+  of IntLitNode:
     result.add fmt"({n.intVal})"
-  of nkFloatLit:
+  of FloatLitNode:
     result.add fmt"({n.floatVal})"
-  of nkStrLit:
+  of StrLitNode:
     result.add "(\"" & n.strVal & "\")"
-  of nkBoolLit:
+  of BoolLitNode:
     result.add fmt"({n.boolVal})"
-  of nkIdent:
+  of IdentNode:
     result.add fmt"({n.name})"
-  of nkBinaryOp:
+  of BinaryOpNode:
     result.add fmt"({n.binOp})"
-  of nkUnaryOp:
+  of UnaryOpNode:
     result.add fmt"({n.unOp})"
   else:
     discard

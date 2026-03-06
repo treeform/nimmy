@@ -27,11 +27,11 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "len() takes exactly 1 argument")
     let arg = args[0]
     case arg.kind
-    of vkString:
+    of StringValue:
       return intValue(arg.strVal.len)
-    of vkArray:
+    of ArrayValue:
       return intValue(arg.arrayVal.len)
-    of vkTable:
+    of TableValue:
       return intValue(arg.tableVal.len)
     else:
       raise newException(RuntimeError, fmt"Cannot get length of {typeName(arg)}")
@@ -47,16 +47,16 @@ proc newNimmyVM*(): NimmyVM =
     if args.len != 1:
       raise newException(RuntimeError, "int() takes exactly 1 argument")
     case args[0].kind
-    of vkInt:
+    of IntValue:
       return args[0]
-    of vkFloat:
+    of FloatValue:
       return intValue(args[0].floatVal.int64)
-    of vkString:
+    of StringValue:
       try:
         return intValue(parseInt(args[0].strVal))
       except:
         raise newException(RuntimeError, fmt"Cannot convert '{args[0].strVal}' to int")
-    of vkBool:
+    of BoolValue:
       return intValue(if args[0].boolVal: 1 else: 0)
     else:
       raise newException(RuntimeError, fmt"Cannot convert {typeName(args[0])} to int")
@@ -66,11 +66,11 @@ proc newNimmyVM*(): NimmyVM =
     if args.len != 1:
       raise newException(RuntimeError, "float() takes exactly 1 argument")
     case args[0].kind
-    of vkInt:
+    of IntValue:
       return floatValue(args[0].intVal.float64)
-    of vkFloat:
+    of FloatValue:
       return args[0]
-    of vkString:
+    of StringValue:
       try:
         return floatValue(parseFloat(args[0].strVal))
       except:
@@ -88,7 +88,7 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("add") do (args: seq[Value]) -> Value:
     if args.len != 2:
       raise newException(RuntimeError, "add() takes exactly 2 arguments")
-    if args[0].kind != vkArray:
+    if args[0].kind != ArrayValue:
       raise newException(RuntimeError, "First argument to add() must be an array")
     args[0].arrayVal.add(args[1])
     return args[0]
@@ -97,7 +97,7 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("pop") do (args: seq[Value]) -> Value:
     if args.len != 1:
       raise newException(RuntimeError, "pop() takes exactly 1 argument")
-    if args[0].kind != vkArray:
+    if args[0].kind != ArrayValue:
       raise newException(RuntimeError, "Argument to pop() must be an array")
     if args[0].arrayVal.len == 0:
       raise newException(RuntimeError, "Cannot pop from empty array")
@@ -107,7 +107,7 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("keys") do (args: seq[Value]) -> Value:
     if args.len != 1:
       raise newException(RuntimeError, "keys() takes exactly 1 argument")
-    if args[0].kind != vkTable:
+    if args[0].kind != TableValue:
       raise newException(RuntimeError, "Argument to keys() must be a table")
     var keys: seq[Value] = @[]
     for k in args[0].tableVal.keys:
@@ -118,7 +118,7 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("values") do (args: seq[Value]) -> Value:
     if args.len != 1:
       raise newException(RuntimeError, "values() takes exactly 1 argument")
-    if args[0].kind != vkTable:
+    if args[0].kind != TableValue:
       raise newException(RuntimeError, "Argument to values() must be a table")
     var vals: seq[Value] = @[]
     for v in args[0].tableVal.values:
@@ -129,9 +129,9 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("hasKey") do (args: seq[Value]) -> Value:
     if args.len != 2:
       raise newException(RuntimeError, "hasKey() takes exactly 2 arguments")
-    if args[0].kind != vkTable:
+    if args[0].kind != TableValue:
       raise newException(RuntimeError, "First argument to hasKey() must be a table")
-    if args[1].kind != vkString:
+    if args[1].kind != StringValue:
       raise newException(RuntimeError, "Second argument to hasKey() must be a string")
     return boolValue(args[0].tableVal.hasKey(args[1].strVal))
   
@@ -140,9 +140,9 @@ proc newNimmyVM*(): NimmyVM =
     if args.len != 1:
       raise newException(RuntimeError, "abs() takes exactly 1 argument")
     case args[0].kind
-    of vkInt:
+    of IntValue:
       return intValue(abs(args[0].intVal))
-    of vkFloat:
+    of FloatValue:
       return floatValue(abs(args[0].floatVal))
     else:
       raise newException(RuntimeError, fmt"Cannot get absolute value of {typeName(args[0])}")
@@ -168,15 +168,15 @@ proc newNimmyVM*(): NimmyVM =
     if args.len != 2:
       raise newException(RuntimeError, "contains() takes exactly 2 arguments")
     case args[0].kind
-    of vkSet:
+    of SetValue:
       boolValue(setContains(args[0], args[1]))
-    of vkArray:
+    of ArrayValue:
       for elem in args[0].arrayVal:
         if equals(elem, args[1]):
           return boolValue(true)
       boolValue(false)
-    of vkTable:
-      if args[1].kind != vkString:
+    of TableValue:
+      if args[1].kind != StringValue:
         raise newException(RuntimeError, "Table key must be a string")
       boolValue(args[0].tableVal.hasKey(args[1].strVal))
     else:
@@ -186,7 +186,7 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("incl") do (args: seq[Value]) -> Value:
     if args.len != 2:
       raise newException(RuntimeError, "incl() takes exactly 2 arguments")
-    if args[0].kind != vkSet:
+    if args[0].kind != SetValue:
       raise newException(RuntimeError, "First argument to incl() must be a set")
     for existing in args[0].setVal:
       if equals(existing, args[1]):
@@ -198,7 +198,7 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("excl") do (args: seq[Value]) -> Value:
     if args.len != 2:
       raise newException(RuntimeError, "excl() takes exactly 2 arguments")
-    if args[0].kind != vkSet:
+    if args[0].kind != SetValue:
       raise newException(RuntimeError, "First argument to excl() must be a set")
     var newSet: seq[Value] = @[]
     for existing in args[0].setVal:
@@ -211,7 +211,7 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("card") do (args: seq[Value]) -> Value:
     if args.len != 1:
       raise newException(RuntimeError, "card() takes exactly 1 argument")
-    if args[0].kind != vkSet:
+    if args[0].kind != SetValue:
       raise newException(RuntimeError, "Argument to card() must be a set")
     intValue(args[0].setVal.len)
   
@@ -219,9 +219,9 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("del") do (args: seq[Value]) -> Value:
     if args.len != 2:
       raise newException(RuntimeError, "del() takes exactly 2 arguments")
-    if args[0].kind != vkTable:
+    if args[0].kind != TableValue:
       raise newException(RuntimeError, "First argument to del() must be a table")
-    if args[1].kind != vkString:
+    if args[1].kind != StringValue:
       raise newException(RuntimeError, "Second argument to del() must be a string")
     args[0].tableVal.del(args[1].strVal)
     args[0]
