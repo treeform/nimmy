@@ -1,9 +1,21 @@
 # Array creation
 let numbers = [1, 2, 3, 4, 5]
 let names = ["Alice", "Bob", "Charlie"]
+let arrays = [[1, 2], ["a", "b"]]
+let nested = [[1, 2], [3, 4]]
+let dented = [
+  [1, 2],
+  ["x", "y"],
+]
+let odd = [ [1,2] ,[3, 4] ]
 
 echo numbers.len
 echo names.len
+echo arrays.len
+echo nested[1][0]
+echo dented[0].len
+echo dented[1][1]
+echo odd[1][1]
 
 # Array indexing
 echo numbers[0]
