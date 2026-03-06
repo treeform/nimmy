@@ -47,10 +47,85 @@ proc skipNewlines(P: Parser) =
   while P.check(tkNewline):
     discard P.advance()
 
+proc skipTableLayout(P: Parser) =
+  while P.checkAny({tkNewline, tkIndent, tkDedent}):
+    discard P.advance()
+
 # Forward declarations
 proc expression(P: Parser): Node
 proc statement(P: Parser): Node
 proc parseBlock(P: Parser): Node
+proc indentedTable(P: Parser, line, col: int): Node
+proc valueExpression(P: Parser): Node
+
+proc configKey(P: Parser): Node =
+  let line = P.current.line
+  let col = P.current.col
+
+  if P.match(tkIdent):
+    return Node(
+      kind: nkStrLit,
+      line: line,
+      col: col,
+      strVal: P.previous.lexeme
+    )
+
+  if P.match(tkString):
+    return Node(
+      kind: nkStrLit,
+      line: line,
+      col: col,
+      strVal: P.previous.lexeme
+    )
+
+  P.error("Expected config key")
+
+proc indentedTable(P: Parser, line, col: int): Node =
+  var
+    keys: seq[Node] = @[]
+    vals: seq[Node] = @[]
+
+  discard P.consume(tkIndent, "Expected indented table")
+  P.skipNewlines()
+
+  while not P.check(tkDedent) and not P.check(tkEof):
+    let key = P.configKey()
+    discard P.consume(tkColon, "Expected ':' after config key")
+
+    var value: Node = nil
+    if P.match(tkNewline):
+      if P.check(tkIndent):
+        value = P.indentedTable(key.line, key.col)
+      else:
+        P.error("Expected value or indented table after ':'")
+    else:
+      value = P.expression()
+
+    keys.add(key)
+    vals.add(value)
+    P.skipNewlines()
+
+  if P.check(tkDedent):
+    discard P.advance()
+
+  Node(
+    kind: nkTable,
+    line: line,
+    col: col,
+    tableKeys: keys,
+    tableVals: vals
+  )
+
+proc valueExpression(P: Parser): Node =
+  let line = P.current.line
+  let col = P.current.col
+
+  if P.match(tkNewline):
+    if P.check(tkIndent):
+      return P.indentedTable(line, col)
+    P.error("Expected expression after newline")
+
+  P.expression()
 
 # Primary expressions
 proc primary(P: Parser): Node =
@@ -89,39 +164,69 @@ proc primary(P: Parser): Node =
   if P.match(tkLBracket):
     # Array literal
     var elems: seq[Node] = @[]
+
+    P.skipTableLayout()
+
     if not P.check(tkRBracket):
-      elems.add(P.expression())
+      elems.add(P.valueExpression())
+      P.skipTableLayout()
+
       while P.match(tkComma):
-        elems.add(P.expression())
+        P.skipTableLayout()
+        if P.check(tkRBracket):
+          break
+        elems.add(P.valueExpression())
+        P.skipTableLayout()
+
     discard P.consume(tkRBracket, "Expected ']' after array elements")
     return Node(kind: nkArray, line: line, col: col, arrayElems: elems)
   
   if P.match(tkLBrace):
     # Could be a table {key: val} or a set {val, val}
+    P.skipTableLayout()
+
     if P.check(tkRBrace):
       # Empty set {}
       discard P.advance()
       return Node(kind: nkSet, line: line, col: col, setElems: @[])
+
     let firstExpr = P.expression()
+    P.skipTableLayout()
+
     if P.check(tkColon):
       # It's a table {key: val, ...}
       discard P.advance()
       var keys = @[firstExpr]
-      var vals = @[P.expression()]
+      var vals = @[P.valueExpression()]
+      P.skipTableLayout()
+
       while P.match(tkComma):
+        P.skipTableLayout()
+        if P.check(tkRBrace):
+          break
         keys.add(P.expression())
+        P.skipTableLayout()
         discard P.consume(tkColon, "Expected ':' after table key")
-        vals.add(P.expression())
+        vals.add(P.valueExpression())
+        P.skipTableLayout()
+
       discard P.consume(tkRBrace, "Expected '}' after table entries")
       return Node(kind: nkTable, line: line, col: col, tableKeys: keys, tableVals: vals)
     else:
       # It's a set {val, val, ...}
       var elems = @[firstExpr]
+      P.skipTableLayout()
+
       while P.match(tkComma):
+        P.skipTableLayout()
+        if P.check(tkRBrace):
+          break
         elems.add(P.expression())
+        P.skipTableLayout()
+
       discard P.consume(tkRBrace, "Expected '}' after set elements")
       return Node(kind: nkSet, line: line, col: col, setElems: elems)
-  
+
   P.error(fmt"Expected expression, got {P.current.kind}")
 
 # Check if current token can start a command-style argument
@@ -298,7 +403,7 @@ proc letStatement(P: Parser): Node =
   
   let name = P.consume(tkIdent, "Expected variable name").lexeme
   discard P.consume(tkEq, "Expected '=' after variable name")
-  let value = P.expression()
+  let value = P.valueExpression()
   
   Node(kind: nkLetStmt, line: line, col: col, varName: name, varValue: value)
 
@@ -310,7 +415,7 @@ proc varStatement(P: Parser): Node =
   let name = P.consume(tkIdent, "Expected variable name").lexeme
   var value: Node = nil
   if P.match(tkEq):
-    value = P.expression()
+    value = P.valueExpression()
   else:
     value = Node(kind: nkNilLit, line: line, col: col)
   
@@ -451,7 +556,7 @@ proc expressionStatement(P: Parser): Node =
   
   if P.match(tkEq):
     # Assignment
-    let value = P.expression()
+    let value = P.valueExpression()
     return Node(kind: nkAssign, line: line, col: col,
                 assignTarget: expr, assignValue: value)
   

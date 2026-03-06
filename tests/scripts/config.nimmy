@@ -1,0 +1,55 @@
+var config =
+  game:
+    name: "First pass"
+
+    width: 20.0
+    height: 30.0
+    numAgents: 2
+    seeds: [42, 43]
+    locations: [
+      {"x": 0, "y": 0},
+      {"x": 1, "y": 1},
+    ]
+
+    objects:
+      wall:
+        width: 1.0
+        height: 1.0
+        color: "#000000"
+      agent:
+        width: 1.0
+        height: 1.0
+        color: "#000000"
+
+echo config
+
+var table = {
+  "game": {
+    "name": "First pass",
+    "width": 20.0,
+    "height": 30.0,
+    "numAgents": 2,
+    "seeds": [42, 43],
+    "locations": [
+      {"x": 0, "y": 0},
+      {"x": 1, "y": 1},
+    ],
+    "objects": {
+      "wall": {
+        "width": 1.0,
+        "height": 1.0,
+        "color": "#000000"
+      },
+      "agent": {
+        "width": 1.0,
+        "height": 1.0,
+        "color": "#000000"
+      }
+    }
+  }
+}
+
+echo table
+
+
+
