@@ -23,6 +23,11 @@ proc `$`*(v: Value): string =
     result = $v.floatVal
   of StringValue:
     result = v.strVal
+  of ArgsValue:
+    var parts: seq[string]
+    for arg in v.argsVal:
+      parts.add($arg)
+    result = parts.join(" ")
   of ArrayValue:
     var parts: seq[string]
     for elem in v.arrayVal:
@@ -80,6 +85,8 @@ proc isTruthy*(v: Value): bool =
     result = v.floatVal != 0.0
   of StringValue:
     result = v.strVal.len > 0
+  of ArgsValue:
+    result = v.argsVal.len > 0
   of ArrayValue:
     result = v.arrayVal.len > 0
   of TableValue:
@@ -117,6 +124,13 @@ proc equals*(a, b: Value): bool =
     result = a.floatVal == b.floatVal
   of StringValue:
     result = a.strVal == b.strVal
+  of ArgsValue:
+    if a.argsVal.len != b.argsVal.len:
+      return false
+    for i in 0..<a.argsVal.len:
+      if not equals(a.argsVal[i], b.argsVal[i]):
+        return false
+    result = true
   of ArrayValue:
     if a.arrayVal.len != b.arrayVal.len:
       return false
@@ -186,6 +200,7 @@ proc typeName*(v: Value): string =
   of IntValue: "int"
   of FloatValue: "float"
   of StringValue: "string"
+  of ArgsValue: "args"
   of ArrayValue: "array"
   of TableValue: "table"
   of SetValue: "set"

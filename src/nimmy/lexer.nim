@@ -37,7 +37,6 @@ const
     "true": TrueToken,
     "false": FalseToken,
     "nil": NilToken,
-    "echo": EchoToken,
   }.toTable
 
 proc newLexer*(source: string): Lexer =

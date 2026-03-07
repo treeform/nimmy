@@ -62,3 +62,13 @@ echo $true
 # 9. echo with multiple comma-separated args
 echo "test1"
 echo "test2", " ", "test3"
+
+# 10. User-defined print wrapper using command syntax
+proc print(value) =
+  echo value
+
+print 1, 2, 3
+print "a", "b", "c"
+print (2 + 3) * 4
+print [1, 2, 3].len
+print $42

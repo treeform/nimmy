@@ -33,7 +33,6 @@ type
     OrToken,           # or
     TypeToken,         # type
     ObjectToken,       # object
-    EchoToken,         # echo (built-in)
 
     # Operators
     PlusToken,         # +
@@ -107,7 +106,6 @@ type
     ObjectDefNode,
     FieldDefNode,
     BlockNode,
-    EchoStmtNode,
     ProgramNode,
     ArrayNode,
     TableNode,
@@ -185,8 +183,6 @@ type
       fieldName*: string
     of BlockNode, ProgramNode:
       stmts*: seq[Node]
-    of EchoStmtNode:
-      echoArgs*: seq[Node]
     of ArrayNode:
       arrayElems*: seq[Node]
     of TableNode:
@@ -208,6 +204,7 @@ type
     IntValue,
     FloatValue,
     StringValue,
+    ArgsValue,
     ArrayValue,
     TableValue,
     SetValue,
@@ -217,7 +214,7 @@ type
     TypeValue,
     RangeValue
 
-  NativeProc* = proc(args: seq[Value]): Value {.nimcall.}
+  NativeProc* = proc(args: seq[Value]): Value {.closure.}
 
   Value* = ref object
     case kind*: ValueKind
@@ -231,6 +228,8 @@ type
       floatVal*: float64
     of StringValue:
       strVal*: string
+    of ArgsValue:
+      argsVal*: seq[Value]
     of ArrayValue:
       arrayVal*: seq[Value]
     of TableValue:
@@ -292,6 +291,9 @@ proc floatValue*(f: float64): Value =
 
 proc stringValue*(s: string): Value =
   Value(kind: StringValue, strVal: s)
+
+proc argsValue*(args: seq[Value]): Value =
+  Value(kind: ArgsValue, argsVal: args)
 
 proc arrayValue*(arr: seq[Value]): Value =
   Value(kind: ArrayValue, arrayVal: arr)

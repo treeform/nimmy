@@ -1,6 +1,6 @@
 ## nimmy_vm.nim
 ## Virtual Machine for the Nimmy scripting language
-## 
+##
 ## Design: Iterative execution with step() as the fundamental operation.
 ## - step() executes one statement and advances
 ## - eval() calls step() until finished
@@ -60,7 +60,7 @@ type
 
 proc newVM*(): VM =
   let global = newScope()
-  VM(
+  let vm = VM(
     globalScope: global,
     currentScope: global,
     output: @[],
@@ -72,6 +72,16 @@ proc newVM*(): VM =
     isFinished: true,
     breakpoints: initHashSet[int]()
   )
+  vm.globalScope.define(
+    "echo",
+    nativeProcValue("echo") do (args: seq[Value]) -> Value:
+      var parts: seq[string] = @[]
+      for arg in args:
+        parts.add($arg)
+      vm.output.add(parts.join(" "))
+      nilValue()
+  )
+  return vm
 
 proc error(vm: VM, msg: string, line, col: int) =
   var e = newException(RuntimeError, fmt"{msg} at line {line}, column {col}")
@@ -89,20 +99,20 @@ proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value])
 
 proc evalBinaryOp(vm: VM, node: Node): Value =
   let left = vm.evalExpr(node.binLeft)
-  
+
   # Short-circuit evaluation for and/or
   if node.binOp == "and":
     if not isTruthy(left):
       return boolValue(false)
     return boolValue(isTruthy(vm.evalExpr(node.binRight)))
-  
+
   if node.binOp == "or":
     if isTruthy(left):
       return boolValue(true)
     return boolValue(isTruthy(vm.evalExpr(node.binRight)))
-  
+
   let right = vm.evalExpr(node.binRight)
-  
+
   case node.binOp
   of "+":
     if left.kind == IntValue and right.kind == IntValue:
@@ -121,7 +131,7 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
           unionSet.add(elem)
       return setValue(unionSet)
     vm.error("Cannot add " & typeName(left) & " and " & typeName(right), node.line, node.col)
-  
+
   of "-":
     if left.kind == IntValue and right.kind == IntValue:
       return intValue(left.intVal - right.intVal)
@@ -139,7 +149,7 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
           diffSet.add(elem)
       return setValue(diffSet)
     vm.error("Cannot subtract " & typeName(right) & " from " & typeName(left), node.line, node.col)
-  
+
   of "*":
     if left.kind == IntValue and right.kind == IntValue:
       return intValue(left.intVal * right.intVal)
@@ -154,7 +164,7 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
             break
       return setValue(interSet)
     vm.error("Cannot multiply " & typeName(left) & " and " & typeName(right), node.line, node.col)
-  
+
   of "/":
     if left.kind in {IntValue, FloatValue} and right.kind in {IntValue, FloatValue}:
       let r = toFloat(right)
@@ -162,42 +172,42 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
         vm.error("Division by zero", node.line, node.col)
       return floatValue(toFloat(left) / r)
     vm.error("Cannot divide " & typeName(left) & " by " & typeName(right), node.line, node.col)
-  
+
   of "div":
     if left.kind == IntValue and right.kind == IntValue:
       if right.intVal == 0:
         vm.error("Division by zero", node.line, node.col)
       return intValue(left.intVal div right.intVal)
     vm.error("div requires integers", node.line, node.col)
-  
+
   of "mod", "%":
     if left.kind == IntValue and right.kind == IntValue:
       if right.intVal == 0:
         vm.error("Modulo by zero", node.line, node.col)
       return intValue(left.intVal mod right.intVal)
     vm.error("mod requires integers", node.line, node.col)
-  
+
   of "&":
     return stringValue($left & $right)
-  
+
   of "==":
     return boolValue(equals(left, right))
-  
+
   of "!=":
     return boolValue(not equals(left, right))
-  
+
   of "<":
     return boolValue(compare(left, right) < 0)
-  
+
   of ">":
     return boolValue(compare(left, right) > 0)
-  
+
   of "<=":
     return boolValue(compare(left, right) <= 0)
-  
+
   of ">=":
     return boolValue(compare(left, right) >= 0)
-  
+
   of "in":
     case right.kind
     of ArrayValue:
@@ -217,13 +227,13 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
       return boolValue(setContains(right, left))
     else:
       vm.error("'in' not supported for " & typeName(right), node.line, node.col)
-  
+
   else:
     vm.error("Unknown operator: " & node.binOp, node.line, node.col)
 
 proc evalUnaryOp(vm: VM, node: Node): Value =
   let operand = vm.evalExpr(node.unOperand)
-  
+
   case node.unOp
   of "-":
     if operand.kind == IntValue:
@@ -241,7 +251,7 @@ proc evalUnaryOp(vm: VM, node: Node): Value =
 proc evalIndex(vm: VM, node: Node): Value =
   let obj = vm.evalExpr(node.indexee)
   let index = vm.evalExpr(node.index)
-  
+
   if obj.kind == ArrayValue:
     if index.kind != IntValue:
       vm.error("Array index must be an integer", node.line, node.col)
@@ -249,7 +259,7 @@ proc evalIndex(vm: VM, node: Node): Value =
     if i < 0 or i >= obj.arrayVal.len:
       vm.error(fmt"Array index {i} out of bounds", node.line, node.col)
     return obj.arrayVal[i]
-  
+
   if obj.kind == StringValue:
     if index.kind != IntValue:
       vm.error("String index must be an integer", node.line, node.col)
@@ -257,40 +267,40 @@ proc evalIndex(vm: VM, node: Node): Value =
     if i < 0 or i >= obj.strVal.len:
       vm.error(fmt"String index {i} out of bounds", node.line, node.col)
     return stringValue($obj.strVal[i])
-  
+
   if obj.kind == TableValue:
     if index.kind != StringValue:
       vm.error("Table key must be a string", node.line, node.col)
     if obj.tableVal.hasKey(index.strVal):
       return obj.tableVal[index.strVal]
     return nilValue()
-  
+
   vm.error(fmt"Cannot index {typeName(obj)}", node.line, node.col)
 
 proc evalDot(vm: VM, node: Node): Value =
   let obj = vm.evalExpr(node.dotLeft)
-  
+
   if obj.kind == ObjectValue:
     if obj.objFields.hasKey(node.dotField):
       return obj.objFields[node.dotField]
     # Don't error yet - try UFCS below
-  
+
   if obj.kind == ArrayValue:
     if node.dotField == "len":
       return intValue(obj.arrayVal.len)
-  
+
   if obj.kind == StringValue:
     if node.dotField == "len":
       return intValue(obj.strVal.len)
-  
+
   if obj.kind == SetValue:
     if node.dotField == "len" or node.dotField == "card":
       return intValue(obj.setVal.len)
-  
+
   if obj.kind == TableValue:
     if node.dotField == "len":
       return intValue(obj.tableVal.len)
-  
+
   # Try UFCS: look up as a function and call with obj as first argument
   let funcVal = vm.currentScope.lookup(node.dotField)
   if funcVal != nil:
@@ -311,25 +321,25 @@ proc evalDot(vm: VM, node: Node): Value =
         vm.returnValue = nil
       vm.currentScope = savedScope
       return funcResult
-  
+
   if obj.kind == ObjectValue:
     vm.error("Object has no field '" & node.dotField & "'", node.line, node.col)
   else:
     vm.error("Cannot access field of " & typeName(obj), node.line, node.col)
 
 proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value]) =
-  ## Evaluate a call expression. 
+  ## Evaluate a call expression.
   ## Returns (result, needsFrame, callee, args)
   ## If needsFrame is true, the caller should push a frame for the function.
   var callee: Value
   var args: seq[Value] = @[]
   var ufcsReceiver: Value = nil
-  
+
   # Handle UFCS: obj.method(args) or obj.method
   if node.callee.kind == DotNode:
     let obj = vm.evalExpr(node.callee.dotLeft)
     let methodName = node.callee.dotField
-    
+
     if obj.kind == ObjectValue and obj.objFields.hasKey(methodName):
       callee = obj.objFields[methodName]
     else:
@@ -343,28 +353,31 @@ proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value]) =
       vm.error("Unknown function: " & node.callee.name, node.line, node.col)
   else:
     callee = vm.evalExpr(node.callee)
-  
+
   if ufcsReceiver != nil:
     args.add(ufcsReceiver)
   for arg in node.args:
     args.add(vm.evalExpr(arg))
-  
+
   if callee.kind == NativeProcValue:
     return (callee.nativeProc(args), false, nil, @[])
-  
+
   if callee.kind == TypeValue:
     let obj = objectValue(callee.typeNameVal)
     for i, arg in node.args:
       if i < callee.typeFields.len:
         obj.objFields[callee.typeFields[i]] = args[i]
     return (obj, false, nil, @[])
-  
+
   if callee.kind != ProcValue:
     vm.error("Cannot call " & typeName(callee), node.line, node.col)
-  
+
   if args.len != callee.procParams.len:
-    vm.error("Expected " & $callee.procParams.len & " arguments, got " & $args.len, node.line, node.col)
-  
+    if callee.procParams.len == 1 and args.len > 1:
+      args = @[argsValue(args)]
+    else:
+      vm.error("Expected " & $callee.procParams.len & " arguments, got " & $args.len, node.line, node.col)
+
   # User-defined function - needs a frame
   return (nilValue(), true, callee, args)
 
@@ -373,7 +386,7 @@ proc evalExpr(vm: VM, node: Node): Value =
   ## Does NOT handle statements that create new frames.
   if node.isNil:
     return nilValue()
-  
+
   case node.kind
   of IntLitNode:
     return intValue(node.intVal)
@@ -460,36 +473,36 @@ proc evalExpr(vm: VM, node: Node): Value =
       vm.returnValue = nilValue()
     vm.controlFlow = ReturnFlow
     return vm.returnValue
-  
+
   of IfStmtNode:
     let cond = vm.evalExpr(node.ifCond)
     if isTruthy(cond):
       return vm.evalExpr(node.ifBody)
-    
+
     for branch in node.elifBranches:
       let elifCond = vm.evalExpr(branch.elifCond)
       if isTruthy(elifCond):
         return vm.evalExpr(branch.elifBody)
-    
+
     if node.elseBranch != nil:
       let elseNode = node.elseBranch
       if elseNode.kind == ElseBranchNode:
         return vm.evalExpr(elseNode.elseBody)
       else:
         return vm.evalExpr(elseNode)
-    
+
     return nilValue()
-  
+
   of LetStmtNode:
     let value = vm.evalExpr(node.varValue)
     vm.currentScope.define(node.varName, value, isConst = true)
     return nilValue()
-  
+
   of VarStmtNode:
     let value = vm.evalExpr(node.varValue)
     vm.currentScope.define(node.varName, value, isConst = false)
     return nilValue()
-  
+
   of AssignNode:
     let value = vm.evalExpr(node.assignValue)
     if node.assignTarget.kind == IdentNode:
@@ -506,7 +519,7 @@ proc evalExpr(vm: VM, node: Node): Value =
       if obj.kind == ObjectValue:
         obj.objFields[node.assignTarget.dotField] = value
     return nilValue()
-  
+
   of ForStmtNode:
     let iter = vm.evalExpr(node.forIter)
     var values: seq[Value] = @[]
@@ -523,7 +536,7 @@ proc evalExpr(vm: VM, node: Node): Value =
         values.add(stringValue($c))
     else:
       discard
-    
+
     let savedScope = vm.currentScope
     for val in values:
       # Create new scope for each iteration (important for closures)
@@ -539,7 +552,7 @@ proc evalExpr(vm: VM, node: Node): Value =
         break
     vm.currentScope = savedScope
     return nilValue()
-  
+
   of WhileStmtNode:
     let savedScope = vm.currentScope
     vm.currentScope = newScope(savedScope)
@@ -557,20 +570,20 @@ proc evalExpr(vm: VM, node: Node): Value =
         break
     vm.currentScope = savedScope
     return nilValue()
-  
+
   of BreakStmtNode:
     vm.controlFlow = BreakFlow
     return nilValue()
-  
+
   of ContinueStmtNode:
     vm.controlFlow = ContinueFlow
     return nilValue()
-  
+
   of ProcDefNode:
     let procVal = procValue(node.procName, node.procParams, node.procBody, vm.currentScope)
     vm.currentScope.define(node.procName, procVal)
     return nilValue()
-  
+
   of TypeDefNode:
     var fields: seq[string] = @[]
     if node.typeBody.kind == ObjectDefNode:
@@ -579,14 +592,7 @@ proc evalExpr(vm: VM, node: Node): Value =
     let typeVal = typeValue(node.typeName, fields)
     vm.currentScope.define(node.typeName, typeVal)
     return nilValue()
-  
-  of EchoStmtNode:
-    var parts: seq[string] = @[]
-    for arg in node.echoArgs:
-      parts.add($vm.evalExpr(arg))
-    vm.output.add(parts.join(" "))
-    return nilValue()
-  
+
   else:
     return nilValue()
 
@@ -596,7 +602,7 @@ proc evalExpr(vm: VM, node: Node): Value =
 
 proc execAssign(vm: VM, node: Node) =
   let value = vm.evalExpr(node.assignValue)
-  
+
   if node.assignTarget.kind == IdentNode:
     let name = node.assignTarget.name
     if vm.currentScope.isConstant(name):
@@ -604,11 +610,11 @@ proc execAssign(vm: VM, node: Node) =
     if not vm.currentScope.assign(name, value):
       vm.error(fmt"Undefined variable '{name}'", node.line, node.col)
     return
-  
+
   if node.assignTarget.kind == IndexNode:
     let obj = vm.evalExpr(node.assignTarget.indexee)
     let index = vm.evalExpr(node.assignTarget.index)
-    
+
     if obj.kind == ArrayValue:
       if index.kind != IntValue:
         vm.error("Array index must be an integer", node.line, node.col)
@@ -617,22 +623,22 @@ proc execAssign(vm: VM, node: Node) =
         vm.error(fmt"Array index {i} out of bounds", node.line, node.col)
       obj.arrayVal[i] = value
       return
-    
+
     if obj.kind == TableValue:
       if index.kind != StringValue:
         vm.error("Table key must be a string", node.line, node.col)
       obj.tableVal[index.strVal] = value
       return
-    
+
     vm.error(fmt"Cannot index assign {typeName(obj)}", node.line, node.col)
-  
+
   if node.assignTarget.kind == DotNode:
     let obj = vm.evalExpr(node.assignTarget.dotLeft)
     if obj.kind == ObjectValue:
       obj.objFields[node.assignTarget.dotField] = value
       return
     vm.error(fmt"Cannot assign field of {typeName(obj)}", node.line, node.col)
-  
+
   vm.error("Invalid assignment target", node.line, node.col)
 
 proc execProcDef(vm: VM, node: Node) =
@@ -646,12 +652,6 @@ proc execTypeDef(vm: VM, node: Node) =
       fields.add(field.fieldName)
   let typeVal = typeValue(node.typeName, fields)
   vm.currentScope.define(node.typeName, typeVal)
-
-proc execEcho(vm: VM, node: Node) =
-  var parts: seq[string] = @[]
-  for arg in node.echoArgs:
-    parts.add($vm.evalExpr(arg))
-  vm.output.add(parts.join(" "))
 
 # =============================================================================
 # Stepping API
@@ -685,7 +685,7 @@ proc updateLine(vm: VM) =
   if frame == nil:
     vm.isFinished = true
     return
-  
+
   if frame.stmtIndex < frame.stmts.len:
     vm.currentLine = frame.stmts[frame.stmtIndex].line
   else:
@@ -697,9 +697,9 @@ proc advanceFrame(vm: VM) =
   if vm.frames.len == 0:
     vm.isFinished = true
     return
-  
+
   let frame = vm.currentFrame
-  
+
   case frame.kind
   of ForLoopFrame:
     frame.forIndex += 1
@@ -719,7 +719,7 @@ proc advanceFrame(vm: VM) =
       frame.scope = iterScope
       vm.currentScope = iterScope
       vm.updateLine()
-  
+
   of WhileLoopFrame:
     let cond = vm.evalExpr(frame.whileNode.whileCond)
     if isTruthy(cond):
@@ -732,16 +732,16 @@ proc advanceFrame(vm: VM) =
       else:
         # Note: stmtIndex was already incremented when we set up the loop
         vm.updateLine()
-  
+
   of FunctionFrame:
     # Handle return value assignment if needed
     let returnVal = if vm.returnValue != nil: vm.returnValue else: nilValue()
     let varName = frame.returnVarName
     let varIsConst = frame.returnVarIsConst
     let assignTarget = frame.returnAssignTarget
-    
+
     vm.popFrame()
-    
+
     # Assign return value if we have a target
     if varName != "":
       vm.currentScope.define(varName, returnVal, isConst = varIsConst)
@@ -749,14 +749,14 @@ proc advanceFrame(vm: VM) =
       # Handle assignment target (for cases like x = foo())
       if assignTarget.kind == IdentNode:
         discard vm.currentScope.assign(assignTarget.name, returnVal)
-    
+
     vm.returnValue = nil
-    
+
     if vm.frames.len == 0:
       vm.isFinished = true
     else:
       vm.updateLine()
-  
+
   of BlockFrame:
     vm.popFrame()
     if vm.frames.len == 0:
@@ -771,7 +771,7 @@ proc load*(vm: VM, ast: Node) =
   vm.controlFlow = NoneFlow
   vm.returnValue = nil
   vm.currentScope = vm.globalScope
-  
+
   var stmts: seq[Node] = @[]
   if ast.kind == ProgramNode:
     stmts = ast.stmts
@@ -779,12 +779,12 @@ proc load*(vm: VM, ast: Node) =
     stmts = ast.stmts
   else:
     stmts = @[ast]
-  
+
   if stmts.len == 0:
     vm.isFinished = true
     vm.currentLine = 0
     return
-  
+
   vm.pushFrame(BlockFrame, stmts, vm.globalScope)
   vm.currentLine = stmts[0].line
 
@@ -793,23 +793,23 @@ proc step*(vm: VM) =
   if vm.isFinished or vm.frames.len == 0:
     vm.isFinished = true
     return
-  
+
   let frame = vm.currentFrame
-  
+
   # Handle completed frames (shouldn't happen, but be safe)
   if frame.stmtIndex >= frame.stmts.len:
     vm.advanceFrame()
     return
-  
+
   let stmt = frame.stmts[frame.stmtIndex]
   vm.currentScope = frame.scope
-  
+
   case stmt.kind
   of LetStmtNode, VarStmtNode:
     let isConst = stmt.kind == LetStmtNode
     let varName = stmt.varName
     let valueNode = stmt.varValue
-    
+
     # Check if the value is a function call
     if valueNode != nil and valueNode.kind == CallNode:
       let (callResult, needsFrame, callee, args) = vm.evalCallExpr(valueNode)
@@ -818,16 +818,16 @@ proc step*(vm: VM) =
         let savedScope = vm.currentScope
         let funcScope = newScope(callee.procClosure)
         vm.currentScope = funcScope
-        
+
         for i, param in callee.procParams:
           funcScope.define(param, args[i])
-        
+
         var bodyStmts: seq[Node] = @[]
         if callee.procBody.kind == BlockNode:
           bodyStmts = callee.procBody.stmts
         else:
           bodyStmts = @[callee.procBody]
-        
+
         let funcFrame = ExecutionFrame(
           kind: FunctionFrame,
           stmts: bodyStmts,
@@ -849,13 +849,13 @@ proc step*(vm: VM) =
       # Normal expression
       let value = vm.evalExpr(valueNode)
       vm.currentScope.define(varName, value, isConst = isConst)
-    
+
     frame.stmtIndex += 1
     vm.updateLine()
-  
+
   of AssignNode:
     let valueNode = stmt.assignValue
-    
+
     # Check if the value is a function call
     if valueNode != nil and valueNode.kind == CallNode:
       let (callResult, needsFrame, callee, args) = vm.evalCallExpr(valueNode)
@@ -864,16 +864,16 @@ proc step*(vm: VM) =
         let savedScope = vm.currentScope
         let funcScope = newScope(callee.procClosure)
         vm.currentScope = funcScope
-        
+
         for i, param in callee.procParams:
           funcScope.define(param, args[i])
-        
+
         var bodyStmts: seq[Node] = @[]
         if callee.procBody.kind == BlockNode:
           bodyStmts = callee.procBody.stmts
         else:
           bodyStmts = @[callee.procBody]
-        
+
         let funcFrame = ExecutionFrame(
           kind: FunctionFrame,
           stmts: bodyStmts,
@@ -905,32 +905,27 @@ proc step*(vm: VM) =
             obj.objFields[target.dotField] = callResult
     else:
       vm.execAssign(stmt)
-    
+
     frame.stmtIndex += 1
     vm.updateLine()
-  
+
   of ProcDefNode:
     vm.execProcDef(stmt)
     frame.stmtIndex += 1
     vm.updateLine()
-  
+
   of TypeDefNode:
     vm.execTypeDef(stmt)
     frame.stmtIndex += 1
     vm.updateLine()
-  
-  of EchoStmtNode:
-    vm.execEcho(stmt)
-    frame.stmtIndex += 1
-    vm.updateLine()
-  
+
   of IfStmtNode:
     let cond = vm.evalExpr(stmt.ifCond)
     frame.stmtIndex += 1
-    
+
     var bodyStmts: seq[Node] = @[]
     var foundBranch = false
-    
+
     if isTruthy(cond):
       if stmt.ifBody.kind == BlockNode:
         bodyStmts = stmt.ifBody.stmts
@@ -947,7 +942,7 @@ proc step*(vm: VM) =
             bodyStmts = @[branch.elifBody]
           foundBranch = true
           break
-      
+
       if not foundBranch and stmt.elseBranch != nil:
         let elseNode = stmt.elseBranch
         var elseBodyNode: Node
@@ -955,24 +950,24 @@ proc step*(vm: VM) =
           elseBodyNode = elseNode.elseBody
         else:
           elseBodyNode = elseNode  # Direct body node
-        
+
         if elseBodyNode.kind == BlockNode:
           bodyStmts = elseBodyNode.stmts
         else:
           bodyStmts = @[elseBodyNode]
         foundBranch = true
-    
+
     if foundBranch and bodyStmts.len > 0:
       let newScope = newScope(vm.currentScope)
       vm.currentScope = newScope
       vm.pushFrame(BlockFrame, bodyStmts, newScope)
-    
+
     vm.updateLine()
-  
+
   of ForStmtNode:
     let iter = vm.evalExpr(stmt.forIter)
     frame.stmtIndex += 1
-    
+
     var values: seq[Value] = @[]
     case iter.kind
     of RangeValue:
@@ -987,18 +982,18 @@ proc step*(vm: VM) =
         values.add(stringValue($c))
     else:
       vm.error("Cannot iterate over " & typeName(iter), stmt.line, stmt.col)
-    
+
     if values.len > 0:
       var bodyStmts: seq[Node] = @[]
       if stmt.forBody.kind == BlockNode:
         bodyStmts = stmt.forBody.stmts
       else:
         bodyStmts = @[stmt.forBody]
-      
+
       let newScope = newScope(vm.currentScope)
       vm.currentScope = newScope
       newScope.define(stmt.forVar, values[0])
-      
+
       let loopFrame = ExecutionFrame(
         kind: ForLoopFrame,
         stmts: bodyStmts,
@@ -1009,23 +1004,23 @@ proc step*(vm: VM) =
         forIndex: 0
       )
       vm.frames.add(loopFrame)
-    
+
     vm.updateLine()
-  
+
   of WhileStmtNode:
     let cond = vm.evalExpr(stmt.whileCond)
     frame.stmtIndex += 1  # Advance past while statement before entering loop
-    
+
     if isTruthy(cond):
       var bodyStmts: seq[Node] = @[]
       if stmt.whileBody.kind == BlockNode:
         bodyStmts = stmt.whileBody.stmts
       else:
         bodyStmts = @[stmt.whileBody]
-      
+
       let newScope = newScope(vm.currentScope)
       vm.currentScope = newScope
-      
+
       let loopFrame = ExecutionFrame(
         kind: WhileLoopFrame,
         stmts: bodyStmts,
@@ -1037,13 +1032,13 @@ proc step*(vm: VM) =
       vm.updateLine()
     else:
       vm.updateLine()
-  
+
   of ReturnStmtNode:
     if stmt.returnValue != nil:
       vm.returnValue = vm.evalExpr(stmt.returnValue)
     else:
       vm.returnValue = nilValue()
-    
+
     # Pop frames until we exit the function, handling return value
     while vm.frames.len > 0:
       let f = vm.currentFrame
@@ -1053,26 +1048,26 @@ proc step*(vm: VM) =
         let varName = f.returnVarName
         let varIsConst = f.returnVarIsConst
         let assignTarget = f.returnAssignTarget
-        
+
         vm.popFrame()
-        
+
         # Assign return value if we have a target
         if varName != "":
           vm.currentScope.define(varName, returnVal, isConst = varIsConst)
         elif assignTarget != nil:
           if assignTarget.kind == IdentNode:
             discard vm.currentScope.assign(assignTarget.name, returnVal)
-        
+
         vm.returnValue = nil
         break
       else:
         vm.popFrame()
-    
+
     if vm.frames.len == 0:
       vm.isFinished = true
     else:
       vm.updateLine()
-  
+
   of BreakStmtNode:
     # Pop frames until we exit the loop
     while vm.frames.len > 0:
@@ -1080,13 +1075,13 @@ proc step*(vm: VM) =
       vm.popFrame()
       if f.kind in {ForLoopFrame, WhileLoopFrame}:
         break
-    
+
     if vm.frames.len == 0:
       vm.isFinished = true
     else:
       # Note: stmtIndex was already incremented when we set up the loop
       vm.updateLine()
-  
+
   of ContinueStmtNode:
     # Pop frames until we reach the loop
     while vm.frames.len > 0:
@@ -1095,27 +1090,27 @@ proc step*(vm: VM) =
         f.stmtIndex = f.stmts.len  # Will trigger next iteration check
         break
       vm.popFrame()
-    
+
     vm.updateLine()
-  
+
   of CallNode:
     let (_, needsFrame, callee, args) = vm.evalCallExpr(stmt)
-    
+
     if needsFrame:
       # Push function frame
       let savedScope = vm.currentScope
       let funcScope = newScope(callee.procClosure)
       vm.currentScope = funcScope
-      
+
       for i, param in callee.procParams:
         funcScope.define(param, args[i])
-      
+
       var bodyStmts: seq[Node] = @[]
       if callee.procBody.kind == BlockNode:
         bodyStmts = callee.procBody.stmts
       else:
         bodyStmts = @[callee.procBody]
-      
+
       let funcFrame = ExecutionFrame(
         kind: FunctionFrame,
         stmts: bodyStmts,
@@ -1130,7 +1125,7 @@ proc step*(vm: VM) =
     else:
       frame.stmtIndex += 1
       vm.updateLine()
-  
+
   else:
     # Generic expression statement
     discard vm.evalExpr(stmt)
@@ -1166,10 +1161,10 @@ proc stepOver*(vm: VM) =
   ## If the current statement is a function call, the entire function executes.
   if vm.isFinished:
     return
-  
+
   let startDepth = vm.frames.len
   vm.step()
-  
+
   # If we entered a new frame (function call), run until we're back
   while not vm.isFinished and vm.frames.len > startDepth:
     vm.step()
@@ -1179,9 +1174,9 @@ proc stepOut*(vm: VM) =
   ## If we're at the top level, runs to completion.
   if vm.isFinished:
     return
-  
+
   let startDepth = vm.frames.len
-  
+
   # Keep stepping until we're at a lower depth (exited a frame)
   while not vm.isFinished:
     vm.step()
@@ -1210,10 +1205,10 @@ proc continueExecution*(vm: VM) =
   ## then run until we hit a breakpoint.
   if vm.isFinished:
     return
-  
+
   # Step at least once
   vm.step()
-  
+
   # Continue until breakpoint or finished
   while not vm.isFinished:
     if vm.currentLine in vm.breakpoints:
@@ -1235,18 +1230,18 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
   ## Execute code interactively in the current scope context.
   ## This does NOT affect the main execution state (frames, currentLine, isFinished).
   ## Returns the result of the expression or last statement.
-  ## 
+  ##
   ## If the code is a simple expression, it evaluates and returns the value.
   ## If it's statements, it executes them and returns the last value.
   ## Any output (print) is captured and returned.
   ## Errors are caught and returned without crashing the main execution.
-  
+
   result = InteractiveResult(success: false, value: nilValue(), output: @[], error: "")
-  
+
   if code.strip() == "":
     result.success = true
     return
-  
+
   # Parse the code
   var ast: Node
   try:
@@ -1257,17 +1252,17 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
   except CatchableError as e:
     result.error = "Parse error: " & e.msg
     return
-  
+
   if ast.isNil:
     result.success = true
     return
-  
+
   # Save current VM state
   let savedOutputLen = vm.output.len
-  
+
   # Use current scope for evaluation (so we can inspect local variables)
   let evalScope = if vm.currentScope != nil: vm.currentScope else: vm.globalScope
-  
+
   # Try to evaluate
   try:
     case ast.kind
@@ -1275,14 +1270,6 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
       # Multiple statements - execute each
       for stmt in ast.stmts:
         case stmt.kind
-        of EchoStmtNode:
-          # Handle echo/print directly
-          var parts: seq[string]
-          for arg in stmt.echoArgs:
-            parts.add($vm.evalExpr(arg))
-          let output = parts.join(" ")
-          vm.output.add(output)
-          result.value = stringValue(output)
         of LetStmtNode, VarStmtNode:
           # Variable declaration in interactive mode
           let varName = stmt.varName
@@ -1299,34 +1286,26 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
         else:
           # Try as expression
           result.value = vm.evalExpr(stmt)
-    
+
     of IdentNode:
       # Simple identifier - look it up
       result.value = evalScope.lookup(ast.name)
-    
+
     of CallNode, BinaryOpNode, UnaryOpNode, IntLitNode, FloatLitNode, StrLitNode, BoolLitNode, NilLitNode, ArrayNode, IndexNode, DotNode:
       # Expression - evaluate it
       result.value = vm.evalExpr(ast)
-    
-    of EchoStmtNode:
-      var parts: seq[string]
-      for arg in ast.echoArgs:
-        parts.add($vm.evalExpr(arg))
-      let output = parts.join(" ")
-      vm.output.add(output)
-      result.value = stringValue(output)
-    
+
     else:
       # Try as expression anyway
       result.value = vm.evalExpr(ast)
-    
+
     result.success = true
-    
+
   except NimmyError as e:
     result.error = "Error: " & e.msg
   except CatchableError as e:
     result.error = "Error: " & e.msg
-  
+
   # Capture any new output
   if vm.output.len > savedOutputLen:
     result.output = vm.output[savedOutputLen..^1]

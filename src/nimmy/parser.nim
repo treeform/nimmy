@@ -8,12 +8,14 @@ type
   Parser* = ref object
     lexer: Lexer
     current: Token
+    upcoming: Token
     previous: Token
 
 proc newParser*(source: string): Parser =
   let lexer = newLexer(source)
   let current = lexer.nextToken()
-  Parser(lexer: lexer, current: current)
+  let upcoming = lexer.nextToken()
+  Parser(lexer: lexer, current: current, upcoming: upcoming)
 
 proc error(P: Parser, msg: string) =
   var e = newException(ParseError, fmt"{msg} at line {P.current.line}, column {P.current.col}")
@@ -23,7 +25,8 @@ proc error(P: Parser, msg: string) =
 
 proc advance(P: Parser): Token =
   P.previous = P.current
-  P.current = P.lexer.nextToken()
+  P.current = P.upcoming
+  P.upcoming = P.lexer.nextToken()
   result = P.previous
 
 proc check(P: Parser, kind: TokenKind): bool =
@@ -51,8 +54,25 @@ proc skipTableLayout(P: Parser) =
   while P.checkAny({NewlineToken, IndentToken, DedentToken}):
     discard P.advance()
 
+proc hasCommandGap(P: Parser): bool =
+  if P.previous.line != P.current.line:
+    return false
+  if P.previous.lexeme.len == 0:
+    return false
+  let previousEndCol = P.previous.col + P.previous.lexeme.len
+  P.current.col > previousEndCol
+
+proc isAttachedToUpcoming(P: Parser): bool =
+  if P.current.line != P.upcoming.line:
+    return false
+  if P.current.lexeme.len == 0:
+    return false
+  let currentEndCol = P.current.col + P.current.lexeme.len
+  P.upcoming.col == currentEndCol
+
 # Forward declarations
 proc expression(P: Parser): Node
+proc commandExpr(P: Parser): Node
 proc statement(P: Parser): Node
 proc parseBlock(P: Parser): Node
 proc indentedTable(P: Parser, line, col: int): Node
@@ -231,10 +251,20 @@ proc primary(P: Parser): Node =
 
 # Check if current token can start a command-style argument
 proc canStartCommandArg(P: Parser): bool =
-  P.current.kind in {IntToken, FloatToken, StringToken, TrueToken, FalseToken, NilToken,
-                      IdentToken, LParenToken, LBracketToken, LBraceToken}
+  case P.current.kind
+  of IntToken, FloatToken, StringToken, TrueToken, FalseToken, NilToken,
+     IdentToken, LParenToken, LBracketToken, LBraceToken, DollarToken,
+     NotToken:
+    true
+  of MinusToken:
+    P.isAttachedToUpcoming()
+  else:
+    false
 
-# Call, indexing, and command syntax
+proc canBeCommandCallee(node: Node): bool =
+  node.kind in {IdentNode, DotNode}
+
+# Call and indexing syntax
 proc postfix(P: Parser): Node =
   result = P.primary()
   
@@ -242,17 +272,21 @@ proc postfix(P: Parser): Node =
     let line = P.current.line
     let col = P.current.col
     
-    if P.match(LParenToken):
+    if P.check(LParenToken) and not P.hasCommandGap():
       # Function call with parentheses
+      discard P.advance()
       var args: seq[Node] = @[]
       if not P.check(RParenToken):
         args.add(P.expression())
         while P.match(CommaToken):
+          if P.check(RParenToken):
+            P.error("Expected ')'")
           args.add(P.expression())
       discard P.consume(RParenToken, "Expected ')' after arguments")
       result = Node(kind: CallNode, line: line, col: col, callee: result, args: args)
-    elif P.match(LBracketToken):
+    elif P.check(LBracketToken) and not P.hasCommandGap():
       # Index access
+      discard P.advance()
       let index = P.expression()
       discard P.consume(RBracketToken, "Expected ']' after index")
       result = Node(kind: IndexNode, line: line, col: col, indexee: result, index: index)
@@ -260,20 +294,6 @@ proc postfix(P: Parser): Node =
       # Field access or UFCS method call
       let field = P.consume(IdentToken, "Expected field name after '.'")
       result = Node(kind: DotNode, line: line, col: col, dotLeft: result, dotField: field.lexeme)
-    elif result.kind == IdentNode and P.canStartCommandArg():
-      # Command syntax: ident arg1, arg2, ...
-      var args: seq[Node] = @[]
-      args.add(P.expression())
-      while P.match(CommaToken):
-        args.add(P.expression())
-      result = Node(kind: CallNode, line: result.line, col: result.col, callee: result, args: args)
-    elif result.kind == DotNode and P.canStartCommandArg():
-      # UFCS command syntax: obj.method arg1, arg2, ...
-      var args: seq[Node] = @[]
-      args.add(P.expression())
-      while P.match(CommaToken):
-        args.add(P.expression())
-      result = Node(kind: CallNode, line: result.line, col: result.col, callee: result, args: args)
     else:
       break
 
@@ -324,6 +344,11 @@ proc term(P: Parser): Node =
   result = P.factor()
   
   while P.checkAny({PlusToken, MinusToken, AmpToken}):
+    if P.current.kind == MinusToken and
+        canBeCommandCallee(result) and
+        P.hasCommandGap() and
+        P.isAttachedToUpcoming():
+      break
     let line = P.current.line
     let col = P.current.col
     let op = P.advance().lexeme
@@ -374,8 +399,26 @@ proc logicalOr(P: Parser): Node =
     result = Node(kind: BinaryOpNode, line: line, col: col,
                   binOp: "or", binLeft: result, binRight: P.logicalAnd())
 
+proc commandExpr(P: Parser): Node =
+  result = P.logicalOr()
+
+  while canBeCommandCallee(result) and
+      P.canStartCommandArg() and
+      P.hasCommandGap():
+    var args: seq[Node] = @[]
+    args.add(P.expression())
+    while P.match(CommaToken):
+      args.add(P.expression())
+    result = Node(
+      kind: CallNode,
+      line: result.line,
+      col: result.col,
+      callee: result,
+      args: args
+    )
+
 proc expression(P: Parser): Node =
-  P.logicalOr()
+  P.commandExpr()
 
 # Parse a block of statements (after indent)
 proc parseBlock(P: Parser): Node =
@@ -535,19 +578,6 @@ proc returnStatement(P: Parser): Node =
   
   Node(kind: ReturnStmtNode, line: line, col: col, returnValue: value)
 
-# Echo statement
-proc echoStatement(P: Parser): Node =
-  let line = P.previous.line
-  let col = P.previous.col
-  
-  var args: seq[Node] = @[]
-  if not P.check(NewlineToken) and not P.check(EofToken):
-    args.add(P.expression())
-    while P.match(CommaToken):
-      args.add(P.expression())
-  
-  Node(kind: EchoStmtNode, line: line, col: col, echoArgs: args)
-
 # Expression statement or assignment
 proc expressionStatement(P: Parser): Node =
   let line = P.current.line
@@ -594,9 +624,6 @@ proc statement(P: Parser): Node =
   
   if P.match(ContinueToken):
     return Node(kind: ContinueStmtNode, line: P.previous.line, col: P.previous.col)
-  
-  if P.match(EchoToken):
-    return P.echoStatement()
   
   return P.expressionStatement()
 

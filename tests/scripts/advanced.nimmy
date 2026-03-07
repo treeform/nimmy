@@ -13,7 +13,7 @@ echo (2 + 3) * 4
 echo -3 * 2
 echo 10 - -5
 
-# $ operator precedence  
+# $ operator precedence
 echo $1 & $2
 echo $(1 + 2)
 
