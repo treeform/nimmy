@@ -19,6 +19,7 @@ The entire implementation is just a couple of files, making it easy to integrate
 ## Features
 
 - **Sandboxed execution** — Safe to run untrusted scripts
+- **Deterministic** — Tables and object fields keep insertion order, so iteration is reproducible across runs and platforms
 - **Embeddable** — Designed to be embedded in host applications
 - **Minimal footprint** — Small codebase, easy to audit and maintain
 - **Familiar syntax** — If you know Nim or Python, you'll feel at home
