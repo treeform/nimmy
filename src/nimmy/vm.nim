@@ -12,6 +12,19 @@ import utils
 import parser
 import std/[strformat, tables, strutils, sets]
 
+const
+  ## Default resource limits. A freshly constructed VM is hostile-safe out of
+  ## the box — an infinite loop, runaway recursion, or memory bomb aborts with
+  ## a catchable error instead of hanging or OOM'ing the host. Hosts can raise
+  ## any of these, or set it to 0 to disable that limit entirely.
+  ##
+  ## The values are deliberately generous: ordinary scripts never reach them,
+  ## they only stop runaway ones. Multi-tenant hosts running many untrusted
+  ## scripts should tighten them and add OS-level isolation as well.
+  DefaultMaxSteps* = 10_000_000        ## ~seconds of interpreter work
+  DefaultMaxCallDepth* = 256           ## native recursion depth
+  DefaultMaxAllocations* = 256_000_000 ## ~256 MB of script-created data
+
 type
   ControlFlow = enum
     NoneFlow,
@@ -57,7 +70,9 @@ type
     isFinished*: bool            ## Whether execution is complete
     # Debugging
     breakpoints*: HashSet[int]   ## Line numbers with breakpoints
-    # Resource limits (defense against hostile / runaway scripts)
+    # Resource limits (defense against hostile / runaway scripts).
+    # These default to finite safety nets (see DefaultMax* consts); set any to
+    # 0 to disable that limit.
     maxSteps*: int               ## Statement budget, 0 means unlimited
     steps*: int                  ## Statements executed so far
     maxCallDepth*: int           ## Cap on native evaluation recursion depth
@@ -77,11 +92,11 @@ proc newVM*(): VM =
     currentLine: 0,
     isFinished: true,
     breakpoints: initHashSet[int](),
-    maxSteps: 0,
+    maxSteps: DefaultMaxSteps,
     steps: 0,
-    maxCallDepth: 256,
+    maxCallDepth: DefaultMaxCallDepth,
     evalDepth: 0,
-    maxAllocations: 0
+    maxAllocations: DefaultMaxAllocations
   )
   vm.globalScope.define(
     "echo",

@@ -114,24 +114,34 @@ the interpreter is written to fail safe:
   `CatchableError`), so a host can wrap `nvm.run(...)` in `try/except
   CatchableError` and keep running. A single bad script cannot take down the
   host process.
-- **Bounded recursion.** Native recursion is capped by `vm.maxCallDepth`
-  (default 256) so a runaway recursive script raises an error instead of
-  overflowing the host's C stack.
+- **Bounded execution.** A statement budget (`vm.maxSteps`) stops infinite
+  loops.
+- **Bounded recursion.** Native recursion is capped by `vm.maxCallDepth` so a
+  runaway recursive script raises an error instead of overflowing the host's C
+  stack.
 - **Bounded memory.** Script allocations are metered against `vm.maxAllocations`
-  so a script cannot exhaust host memory (see below).
+  so a script cannot exhaust host memory.
 
-To run genuinely hostile scripts, the host must also bound execution time and
-memory, which are unlimited by default:
+**These limits are on by default**, so a freshly constructed VM is hostile-safe
+without any host configuration — an infinite loop, runaway recursion, or memory
+bomb aborts with a catchable `RuntimeError`:
 
 ```nim
-let nvm = newNimmyVM()
-nvm.vm.maxSteps = 1_000_000        # abort after N statements (0 = unlimited)
-nvm.vm.maxCallDepth = 256          # native recursion cap
-nvm.vm.maxAllocations = 64_000_000 # allocation budget in units (0 = unlimited)
+let nvm = newNimmyVM()          # already limited (see DefaultMax* in vm.nim)
 try:
   discard nvm.run(untrustedSource)
 except CatchableError as e:
   echo "script rejected: ", e.msg
+```
+
+The defaults are generous safety nets that ordinary scripts never reach:
+`maxSteps = 10_000_000`, `maxCallDepth = 256`, `maxAllocations = 256_000_000`
+(≈256 MB). A host can tune any of them — raise them for heavy trusted scripts,
+tighten them for a multi-tenant service, or set one to `0` to disable it:
+
+```nim
+nvm.vm.maxSteps = 1_000_000     # tighter statement budget
+nvm.vm.maxAllocations = 0       # disable the allocation limit (trusted use)
 ```
 
 `maxAllocations` is a deterministic budget on the heap-backed data a script

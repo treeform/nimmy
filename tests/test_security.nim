@@ -148,6 +148,36 @@ proc runSecurityTests*(): (int, int) =
       got = "error: " & e.msg
     check("ordinary script runs within a generous allocation budget", ok, got)
 
+  # -- Safe by default: a freshly built VM needs no host configuration. --------
+  block:
+    let nvm = newNimmyVM()
+    check("fresh VM has finite default limits",
+          nvm.vm.maxSteps > 0 and nvm.vm.maxCallDepth > 0 and
+            nvm.vm.maxAllocations > 0,
+          "steps=" & $nvm.vm.maxSteps & " depth=" & $nvm.vm.maxCallDepth &
+            " alloc=" & $nvm.vm.maxAllocations)
+  block:
+    # A memory bomb aborts on a default VM with no limits set by the host.
+    # (Trips in ~28 doublings, so this is cheap.)
+    let nvm = newNimmyVM()
+    var msg = ""
+    try:
+      discard nvm.run("var s = \"x\"\nwhile true:\n  s = s & s\n")
+    except CatchableError as e:
+      msg = e.msg
+    check("memory bomb contained by default (no host config)",
+          "Maximum allocation exceeded" in msg, "got: " & msg)
+  block:
+    # Runaway recursion aborts on a default VM with no limits set by the host.
+    let nvm = newNimmyVM()
+    var msg = ""
+    try:
+      discard nvm.run("proc f(n) =\n  return f(n) + 1\necho f(1)\n")
+    except CatchableError as e:
+      msg = e.msg
+    check("runaway recursion contained by default (no host config)",
+          "Maximum call depth exceeded" in msg, "got: " & msg)
+
   # -- Legitimate recursion must still work under the default depth cap. --------
   block:
     let nvm = newNimmyVM()
