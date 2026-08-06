@@ -1,0 +1,7 @@
+# Sandbox: out-of-bounds write from a proc invoked in expression context,
+# whose whole body runs through evalExpr (a second unchecked write path).
+var a = [1, 2, 3]
+proc f() =
+  a[999999] = 7
+  return 0
+echo f()

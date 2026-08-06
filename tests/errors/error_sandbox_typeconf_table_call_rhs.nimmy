@@ -1,0 +1,3 @@
+# Sandbox: int used as a table key via a call-valued RHS (type confusion).
+var t = {"k": 1}
+t[999] = len("x")

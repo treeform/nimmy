@@ -6,6 +6,7 @@ import
   test_stepping,
   test_debugging,
   test_interactive,
+  test_security,
   tests
 
 proc main() =
@@ -34,7 +35,13 @@ proc main() =
   totalPassed += interactivePassed
   totalFailed += interactiveFailed
   echo ""
-  
+
+  # Run security / sandbox hardening tests
+  let (securityPassed, securityFailed) = runSecurityTests()
+  totalPassed += securityPassed
+  totalFailed += securityFailed
+  echo ""
+
   # Run gold master tests
   let (goldPassed, goldFailed) = runGoldMasterTests()
   totalPassed += goldPassed
@@ -49,6 +56,7 @@ proc main() =
   echo "  Stepping tests:     " & $steppingPassed & " passed, " & $steppingFailed & " failed"
   echo "  Debugging tests:    " & $debuggingPassed & " passed, " & $debuggingFailed & " failed"
   echo "  Interactive tests:  " & $interactivePassed & " passed, " & $interactiveFailed & " failed"
+  echo "  Security tests:     " & $securityPassed & " passed, " & $securityFailed & " failed"
   echo "  Gold master tests:  " & $goldPassed & " passed, " & $goldFailed & " failed"
   echo ""
   echo "  TOTAL: " & $totalPassed & " passed, " & $totalFailed & " failed"

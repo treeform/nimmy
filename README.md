@@ -18,7 +18,10 @@ The entire implementation is just a couple of files, making it easy to integrate
 
 ## Features
 
-- **Sandboxed execution** — Safe to run untrusted scripts
+- **Sandboxed execution** — No file, process, or network access, and every
+  element access is bounds- and type-checked so a script cannot corrupt the
+  host's memory. See [Security model](#security-model) for how to run untrusted
+  scripts safely.
 - **Deterministic** — Tables and object fields keep insertion order, so iteration is reproducible across runs and platforms
 
 ## Fully deterministic builds
@@ -96,6 +99,43 @@ nvm.addProc("add") do (args: seq[Value]) -> Value:
 discard nvm.run("echo add(1, 2)")
 # Output: 3
 ```
+
+## Security model
+
+Nimmy is meant to run untrusted scripts. The language exposes no way to touch
+the filesystem, spawn processes, or reach the network — the only capabilities a
+script has are the builtins and custom procs the host registers. Beyond that,
+the interpreter is written to fail safe:
+
+- **Memory safety.** Every array/table read and write is bounds- and
+  type-checked. An out-of-bounds index, a negative index, or a wrong-typed key
+  raises a catchable `RuntimeError` — it can never read or write past a buffer.
+- **Catchable failures.** Script errors are `RuntimeError` (a
+  `CatchableError`), so a host can wrap `nvm.run(...)` in `try/except
+  CatchableError` and keep running. A single bad script cannot take down the
+  host process.
+- **Bounded recursion.** Native recursion is capped by `vm.maxCallDepth`
+  (default 256) so a runaway recursive script raises an error instead of
+  overflowing the host's C stack.
+
+To run genuinely hostile scripts, the host must also bound execution time and
+allocation, which are unlimited by default:
+
+```nim
+let nvm = newNimmyVM()
+nvm.vm.maxSteps = 1_000_000   # abort after N statements (0 = unlimited)
+nvm.vm.maxCallDepth = 256     # native recursion cap
+try:
+  discard nvm.run(untrustedSource)
+except CatchableError as e:
+  echo "script rejected: ", e.msg
+```
+
+> **Do not compile the host with `-d:danger` when running untrusted scripts.**
+> `-d:danger` removes the runtime range/field checks the sandbox relies on.
+> Use the default or `-d:release` build. For strong isolation, also run the
+> host in an OS sandbox (separate process, seccomp/jail, resource limits) as
+> defense in depth.
 
 ## Debugger and inspection support
 

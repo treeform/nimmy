@@ -57,6 +57,11 @@ type
     isFinished*: bool            ## Whether execution is complete
     # Debugging
     breakpoints*: HashSet[int]   ## Line numbers with breakpoints
+    # Resource limits (defense against hostile / runaway scripts)
+    maxSteps*: int               ## Statement budget, 0 means unlimited
+    steps*: int                  ## Statements executed so far
+    maxCallDepth*: int           ## Cap on native evaluation recursion depth
+    evalDepth: int               ## Current native evaluation recursion depth
 
 proc newVM*(): VM =
   let global = newScope()
@@ -70,7 +75,11 @@ proc newVM*(): VM =
     frames: @[],
     currentLine: 0,
     isFinished: true,
-    breakpoints: initHashSet[int]()
+    breakpoints: initHashSet[int](),
+    maxSteps: 0,
+    steps: 0,
+    maxCallDepth: 256,
+    evalDepth: 0
   )
   vm.globalScope.define(
     "echo",
@@ -96,6 +105,7 @@ proc error(vm: VM, msg: string, line, col: int) =
 # Forward declarations
 proc evalExpr(vm: VM, node: Node): Value
 proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value])
+proc assignToTarget(vm: VM, target: Node, value: Value)
 
 proc evalBinaryOp(vm: VM, node: Node): Value =
   let left = vm.evalExpr(node.binLeft)
@@ -313,15 +323,22 @@ proc evalDot(vm: VM, node: Node): Value =
       # Call user-defined proc with obj as argument (UFCS without parens)
       if funcVal.procParams.len != 1:
         vm.error("UFCS call requires function with 1 parameter", node.line, node.col)
+      if vm.evalDepth >= vm.maxCallDepth:
+        vm.error("Maximum call depth exceeded", node.line, node.col)
       let savedScope = vm.currentScope
+      inc vm.evalDepth
       vm.currentScope = newScope(funcVal.procClosure)
       vm.currentScope.define(funcVal.procParams[0], obj)
-      var funcResult = vm.evalExpr(funcVal.procBody)
+      var funcResult: Value
+      try:
+        funcResult = vm.evalExpr(funcVal.procBody)
+      finally:
+        dec vm.evalDepth
+        vm.currentScope = savedScope
       if vm.controlFlow == ReturnFlow:
         funcResult = vm.returnValue
         vm.controlFlow = NoneFlow
         vm.returnValue = nil
-      vm.currentScope = savedScope
       return funcResult
 
   if obj.kind == ObjectValue:
@@ -412,18 +429,27 @@ proc evalExpr(vm: VM, node: Node): Value =
     let (callResult, needsFrame, callee, args) = vm.evalCallExpr(node)
     if needsFrame:
       # This shouldn't happen during expression evaluation within step
-      # But we handle it by executing the function synchronously
+      # But we handle it by executing the function synchronously.
+      # Depth-cap the native recursion so a hostile script cannot overflow
+      # the host's C stack (an uncatchable crash).
+      if vm.evalDepth >= vm.maxCallDepth:
+        vm.error("Maximum call depth exceeded", node.line, node.col)
       let savedScope = vm.currentScope
+      inc vm.evalDepth
       vm.currentScope = newScope(callee.procClosure)
       for i, param in callee.procParams:
         vm.currentScope.define(param, args[i])
       # Recursively evaluate (fallback for expressions with calls)
-      var funcResult = vm.evalExpr(callee.procBody)
+      var funcResult: Value
+      try:
+        funcResult = vm.evalExpr(callee.procBody)
+      finally:
+        dec vm.evalDepth
+        vm.currentScope = savedScope
       if vm.controlFlow == ReturnFlow:
         funcResult = vm.returnValue
         vm.controlFlow = NoneFlow
         vm.returnValue = nil
-      vm.currentScope = savedScope
       return funcResult
     return callResult
   of IndexNode:
@@ -507,19 +533,7 @@ proc evalExpr(vm: VM, node: Node): Value =
 
   of AssignNode:
     let value = vm.evalExpr(node.assignValue)
-    if node.assignTarget.kind == IdentNode:
-      discard vm.currentScope.assign(node.assignTarget.name, value)
-    elif node.assignTarget.kind == IndexNode:
-      let obj = vm.evalExpr(node.assignTarget.indexee)
-      let index = vm.evalExpr(node.assignTarget.index)
-      if obj.kind == ArrayValue:
-        obj.arrayVal[index.intVal] = value
-      elif obj.kind == TableValue:
-        obj.tableVal[index.strVal] = value
-    elif node.assignTarget.kind == DotNode:
-      let obj = vm.evalExpr(node.assignTarget.dotLeft)
-      if obj.kind == ObjectValue:
-        obj.objFields[node.assignTarget.dotField] = value
+    vm.assignToTarget(node.assignTarget, value)
     return nilValue()
 
   of ForStmtNode:
@@ -602,46 +616,50 @@ proc evalExpr(vm: VM, node: Node): Value =
 # Statement Execution (used by step)
 # =============================================================================
 
-proc execAssign(vm: VM, node: Node) =
-  let value = vm.evalExpr(node.assignValue)
-
-  if node.assignTarget.kind == IdentNode:
-    let name = node.assignTarget.name
+proc assignToTarget(vm: VM, target: Node, value: Value) =
+  ## Assign an already-evaluated value to an assignment target with full
+  ## bounds and type checking. Every write path routes through here so none
+  ## can bypass the checks (prevents out-of-bounds and type-confused writes,
+  ## which are memory-unsafe under -d:danger and abort the host otherwise).
+  case target.kind
+  of IdentNode:
+    let name = target.name
     if vm.currentScope.isConstant(name):
-      vm.error(fmt"Cannot assign to constant '{name}'", node.line, node.col)
+      vm.error(fmt"Cannot assign to constant '{name}'", target.line, target.col)
     if not vm.currentScope.assign(name, value):
-      vm.error(fmt"Undefined variable '{name}'", node.line, node.col)
-    return
+      vm.error(fmt"Undefined variable '{name}'", target.line, target.col)
 
-  if node.assignTarget.kind == IndexNode:
-    let obj = vm.evalExpr(node.assignTarget.indexee)
-    let index = vm.evalExpr(node.assignTarget.index)
+  of IndexNode:
+    let obj = vm.evalExpr(target.indexee)
+    let index = vm.evalExpr(target.index)
 
     if obj.kind == ArrayValue:
       if index.kind != IntValue:
-        vm.error("Array index must be an integer", node.line, node.col)
+        vm.error("Array index must be an integer", target.line, target.col)
       let i = index.intVal
       if i < 0 or i >= obj.arrayVal.len:
-        vm.error(fmt"Array index {i} out of bounds", node.line, node.col)
+        vm.error(fmt"Array index {i} out of bounds", target.line, target.col)
       obj.arrayVal[i] = value
-      return
-
-    if obj.kind == TableValue:
+    elif obj.kind == TableValue:
       if index.kind != StringValue:
-        vm.error("Table key must be a string", node.line, node.col)
+        vm.error("Table key must be a string", target.line, target.col)
       obj.tableVal[index.strVal] = value
-      return
+    else:
+      vm.error(fmt"Cannot index assign {typeName(obj)}", target.line, target.col)
 
-    vm.error(fmt"Cannot index assign {typeName(obj)}", node.line, node.col)
-
-  if node.assignTarget.kind == DotNode:
-    let obj = vm.evalExpr(node.assignTarget.dotLeft)
+  of DotNode:
+    let obj = vm.evalExpr(target.dotLeft)
     if obj.kind == ObjectValue:
-      obj.objFields[node.assignTarget.dotField] = value
-      return
-    vm.error(fmt"Cannot assign field of {typeName(obj)}", node.line, node.col)
+      obj.objFields[target.dotField] = value
+    else:
+      vm.error(fmt"Cannot assign field of {typeName(obj)}", target.line, target.col)
 
-  vm.error("Invalid assignment target", node.line, node.col)
+  else:
+    vm.error("Invalid assignment target", target.line, target.col)
+
+proc execAssign(vm: VM, node: Node) =
+  let value = vm.evalExpr(node.assignValue)
+  vm.assignToTarget(node.assignTarget, value)
 
 proc execProcDef(vm: VM, node: Node) =
   let procVal = procValue(node.procName, node.procParams, node.procBody, vm.currentScope)
@@ -796,6 +814,10 @@ proc step*(vm: VM) =
     vm.isFinished = true
     return
 
+  inc vm.steps
+  if vm.maxSteps > 0 and vm.steps > vm.maxSteps:
+    vm.error("Maximum step count exceeded", vm.currentLine, 0)
+
   let frame = vm.currentFrame
 
   # Handle completed frames (shouldn't happen, but be safe)
@@ -891,20 +913,7 @@ proc step*(vm: VM) =
         return
       else:
         # Native function - use callResult directly
-        let target = stmt.assignTarget
-        if target.kind == IdentNode:
-          discard vm.currentScope.assign(target.name, callResult)
-        elif target.kind == IndexNode:
-          let obj = vm.evalExpr(target.indexee)
-          let index = vm.evalExpr(target.index)
-          if obj.kind == ArrayValue:
-            obj.arrayVal[index.intVal] = callResult
-          elif obj.kind == TableValue:
-            obj.tableVal[index.strVal] = callResult
-        elif target.kind == DotNode:
-          let obj = vm.evalExpr(target.dotLeft)
-          if obj.kind == ObjectValue:
-            obj.objFields[target.dotField] = callResult
+        vm.assignToTarget(stmt.assignTarget, callResult)
     else:
       vm.execAssign(stmt)
 
@@ -1278,9 +1287,10 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
           let varValue = if stmt.varValue.isNil: nilValue() else: vm.evalExpr(stmt.varValue)
           evalScope.define(varName, varValue)
         of AssignNode:
-          # Assignment
+          # Assignment (dispatch on target kind; never assume a bare name)
           let val = vm.evalExpr(stmt.assignValue)
-          discard evalScope.assign(stmt.assignTarget.name, val)
+          vm.assignToTarget(stmt.assignTarget, val)
+          result.value = val
         of CallNode:
           # Function call as statement
           let val = vm.evalExpr(stmt)

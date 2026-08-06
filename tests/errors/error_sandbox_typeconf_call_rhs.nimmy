@@ -1,0 +1,4 @@
+# Sandbox: string used as an array index via a call-valued RHS.
+# This reinterpreted a string as an int index (type confusion) under -d:danger.
+var a = [1, 2, 3]
+a["x"] = len("x")

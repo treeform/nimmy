@@ -1,0 +1,5 @@
+# Sandbox: unbounded recursion in expression context must raise a catchable
+# error instead of overflowing the host C stack (an uncatchable SIGSEGV).
+proc f(n) =
+  return f(n) + 1
+echo f(1)
