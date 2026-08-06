@@ -38,15 +38,24 @@ type
     WhileLoopFrame   ## Executing a while loop
     FunctionFrame    ## Inside a function call
 
+  ForIterKind* = enum
+    ForArrayIter     ## Iterate an array's backing elements by index
+    ForStringIter    ## Iterate a string's characters by index
+    ForRangeIter     ## Iterate an integer range lazily (never materialized)
+
   ExecutionFrame* = ref object
     kind*: FrameKind
     stmts: seq[Node]          ## Statements to execute
     stmtIndex: int            ## Current statement index
     scope: Scope              ## Scope for this frame
-    # For loops
+    # For loops (iterated lazily, so a huge range costs O(1) memory)
     forNode: Node             ## The for loop node
-    forValues: seq[Value]     ## Values to iterate over
-    forIndex: int             ## Current iteration index
+    forIterKind: ForIterKind  ## Which kind of iterable this frame walks
+    forArray: seq[Value]      ## ForArrayIter: backing elements (aliased, not copied)
+    forString: string         ## ForStringIter: backing string
+    forIndex: int             ## ForArrayIter/ForStringIter position
+    forRangeCur: int64        ## ForRangeIter current value
+    forRangeEnd: int64        ## ForRangeIter inclusive end
     # While loops
     whileNode: Node           ## The while loop node
     # Functions
@@ -116,6 +125,14 @@ proc error(vm: VM, msg: string, line, col: int) =
   e.line = line
   e.col = col
   raise e
+
+proc chargeStep(vm: VM) =
+  ## Count one unit of work against the statement budget. Called per statement
+  ## in step() and per loop iteration in the expression-context evaluator, so a
+  ## runaway loop aborts on either path.
+  inc vm.steps
+  if vm.maxSteps > 0 and vm.steps > vm.maxSteps:
+    vm.error("Maximum step count exceeded", vm.currentLine, 0)
 
 # =============================================================================
 # Expression Evaluation (non-stepping, used within a single step)
@@ -557,34 +574,49 @@ proc evalExpr(vm: VM, node: Node): Value =
 
   of ForStmtNode:
     let iter = vm.evalExpr(node.forIter)
-    var values: seq[Value] = @[]
+    let savedScope = vm.currentScope
+
+    # Iterate lazily: produce one loop value at a time instead of materializing
+    # the whole sequence, so a huge range does not allocate up front. Each
+    # iteration charges the step budget so the loop stays bounded here too.
+    template runBody(makeVal: Value): bool =
+      ## Returns true if the loop should stop.
+      vm.chargeStep()
+      vm.currentScope = newScope(savedScope)
+      vm.currentScope.define(node.forVar, makeVal)
+      discard vm.evalExpr(node.forBody)
+      var stop = false
+      if vm.controlFlow == BreakFlow:
+        vm.controlFlow = NoneFlow
+        stop = true
+      elif vm.controlFlow == ContinueFlow:
+        vm.controlFlow = NoneFlow
+      elif vm.controlFlow == ReturnFlow:
+        stop = true
+      stop
+
     case iter.kind
     of RangeValue:
       let s = iter.rangeStart
       let e = if iter.rangeInclusive: iter.rangeEnd else: iter.rangeEnd - 1
-      for i in s..e:
-        values.add(intValue(i))
+      var i = s
+      while i <= e:
+        if runBody(intValue(i)):
+          break
+        if i == e:  # avoid int64 overflow at the top of the range
+          break
+        i += 1
     of ArrayValue:
-      values = iter.arrayVal
+      for val in iter.arrayVal:
+        if runBody(val):
+          break
     of StringValue:
       for c in iter.strVal:
-        values.add(stringValue($c))
+        if runBody(stringValue($c)):
+          break
     else:
       discard
 
-    let savedScope = vm.currentScope
-    for val in values:
-      # Create new scope for each iteration (important for closures)
-      vm.currentScope = newScope(savedScope)
-      vm.currentScope.define(node.forVar, val)
-      discard vm.evalExpr(node.forBody)
-      if vm.controlFlow == BreakFlow:
-        vm.controlFlow = NoneFlow
-        break
-      if vm.controlFlow == ContinueFlow:
-        vm.controlFlow = NoneFlow
-      if vm.controlFlow == ReturnFlow:
-        break
     vm.currentScope = savedScope
     return nilValue()
 
@@ -592,6 +624,7 @@ proc evalExpr(vm: VM, node: Node): Value =
     let savedScope = vm.currentScope
     vm.currentScope = newScope(savedScope)
     while true:
+      vm.chargeStep()
       let cond = vm.evalExpr(node.whileCond)
       if not isTruthy(cond):
         break
@@ -717,6 +750,32 @@ proc currentFrame(vm: VM): ExecutionFrame =
     return vm.frames[^1]
   return nil
 
+proc forCurrentValue(frame: ExecutionFrame): Value =
+  ## The value the loop variable takes at the current position, produced on
+  ## demand so ranges never materialize into a seq.
+  case frame.forIterKind
+  of ForArrayIter: frame.forArray[frame.forIndex]
+  of ForStringIter: stringValue($frame.forString[frame.forIndex])
+  of ForRangeIter: intValue(frame.forRangeCur)
+
+proc forAdvance(frame: ExecutionFrame): bool =
+  ## Advance to the next position; returns false when the iterable is
+  ## exhausted. For ranges this never steps past the end, so it cannot
+  ## overflow int64.
+  case frame.forIterKind
+  of ForArrayIter:
+    frame.forIndex += 1
+    frame.forIndex < frame.forArray.len
+  of ForStringIter:
+    frame.forIndex += 1
+    frame.forIndex < frame.forString.len
+  of ForRangeIter:
+    if frame.forRangeCur >= frame.forRangeEnd:
+      false
+    else:
+      frame.forRangeCur += 1
+      true
+
 proc advanceFrame(vm: VM)
 
 proc updateLine(vm: VM) =
@@ -741,8 +800,7 @@ proc advanceFrame(vm: VM) =
 
   case frame.kind
   of ForLoopFrame:
-    frame.forIndex += 1
-    if frame.forIndex >= frame.forValues.len:
+    if not frame.forAdvance():
       vm.popFrame()
       if vm.frames.len == 0:
         vm.isFinished = true
@@ -754,7 +812,7 @@ proc advanceFrame(vm: VM) =
       frame.stmtIndex = 0
       let parentScope = frame.scope.parent
       let iterScope = newScope(parentScope)
-      iterScope.define(frame.forNode.forVar, frame.forValues[frame.forIndex])
+      iterScope.define(frame.forNode.forVar, frame.forCurrentValue())
       frame.scope = iterScope
       vm.currentScope = iterScope
       vm.updateLine()
@@ -835,9 +893,7 @@ proc step*(vm: VM) =
     vm.isFinished = true
     return
 
-  inc vm.steps
-  if vm.maxSteps > 0 and vm.steps > vm.maxSteps:
-    vm.error("Maximum step count exceeded", vm.currentLine, 0)
+  vm.chargeStep()
 
   let frame = vm.currentFrame
 
@@ -1000,41 +1056,45 @@ proc step*(vm: VM) =
     let iter = vm.evalExpr(stmt.forIter)
     frame.stmtIndex += 1
 
-    var values: seq[Value] = @[]
+    var bodyStmts: seq[Node] = @[]
+    if stmt.forBody.kind == BlockNode:
+      bodyStmts = stmt.forBody.stmts
+    else:
+      bodyStmts = @[stmt.forBody]
+
+    # Build a lazy loop frame. Ranges are not materialized, so `for i in
+    # 0 .. 100_000_000` costs O(1) memory here; each iteration then charges the
+    # step budget, keeping the loop bounded.
+    var loopFrame: ExecutionFrame = nil
     case iter.kind
     of RangeValue:
       let s = iter.rangeStart
       let e = if iter.rangeInclusive: iter.rangeEnd else: iter.rangeEnd - 1
-      for i in s..e:
-        values.add(intValue(i))
+      if s <= e:
+        loopFrame = ExecutionFrame(
+          kind: ForLoopFrame, stmts: bodyStmts, stmtIndex: 0,
+          forNode: stmt, forIterKind: ForRangeIter,
+          forRangeCur: s, forRangeEnd: e)
     of ArrayValue:
-      values = iter.arrayVal
+      if iter.arrayVal.len > 0:
+        loopFrame = ExecutionFrame(
+          kind: ForLoopFrame, stmts: bodyStmts, stmtIndex: 0,
+          forNode: stmt, forIterKind: ForArrayIter,
+          forArray: iter.arrayVal, forIndex: 0)
     of StringValue:
-      for c in iter.strVal:
-        values.add(stringValue($c))
+      if iter.strVal.len > 0:
+        loopFrame = ExecutionFrame(
+          kind: ForLoopFrame, stmts: bodyStmts, stmtIndex: 0,
+          forNode: stmt, forIterKind: ForStringIter,
+          forString: iter.strVal, forIndex: 0)
     else:
       vm.error("Cannot iterate over " & typeName(iter), stmt.line, stmt.col)
 
-    if values.len > 0:
-      var bodyStmts: seq[Node] = @[]
-      if stmt.forBody.kind == BlockNode:
-        bodyStmts = stmt.forBody.stmts
-      else:
-        bodyStmts = @[stmt.forBody]
-
+    if loopFrame != nil:
       let newScope = newScope(vm.currentScope)
       vm.currentScope = newScope
-      newScope.define(stmt.forVar, values[0])
-
-      let loopFrame = ExecutionFrame(
-        kind: ForLoopFrame,
-        stmts: bodyStmts,
-        stmtIndex: 0,
-        scope: newScope,
-        forNode: stmt,
-        forValues: values,
-        forIndex: 0
-      )
+      loopFrame.scope = newScope
+      newScope.define(stmt.forVar, loopFrame.forCurrentValue())
       vm.frames.add(loopFrame)
 
     vm.updateLine()

@@ -148,6 +148,36 @@ proc runSecurityTests*(): (int, int) =
       got = "error: " & e.msg
     check("ordinary script runs within a generous allocation budget", ok, got)
 
+  # -- For loops iterate lazily: a huge range must not materialize. -------------
+  # If the range were built into a seq up front it would OOM before any limit
+  # could trip; lazy iteration means it simply runs until the step budget stops
+  # it. (A regression here would hang or OOM this test, which is a loud signal.)
+  expectContainedError(
+    "huge range bounded by maxSteps, not materialized",
+    "var last = 0\nfor i in 0 .. 1000000000:\n  last = i\n",
+    "Maximum step count exceeded", maxSteps = 50_000)
+  expectContainedError(
+    "huge range in expression context is bounded",
+    "proc f() =\n  var last = 0\n  for i in 0 .. 1000000000:\n    last = i\n" &
+      "  return last\necho f()\n",
+    "Maximum step count exceeded", maxSteps = 50_000)
+  expectContainedError(
+    "expression-context while is bounded",
+    "proc g() =\n  while true:\n    var x = 1\n  return 0\necho g()\n",
+    "Maximum step count exceeded", maxSteps = 50_000)
+  block:
+    # Lazy iteration must still be correct across ranges, strings and break.
+    let nvm = newNimmyVM()
+    var got = ""
+    try:
+      got = nvm.run(
+        "var sum = 0\nfor i in 1 .. 100:\n  sum = sum + i\n" &
+        "var n = 0\nfor c in \"hello\":\n  if c == \"l\":\n    break\n  n = n + 1\n" &
+        "echo sum\necho n\n").strip()
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("lazy for loops compute correct results", got == "5050\n2", got)
+
   # -- Safe by default: a freshly built VM needs no host configuration. --------
   block:
     let nvm = newNimmyVM()
