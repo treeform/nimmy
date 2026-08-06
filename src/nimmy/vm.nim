@@ -166,6 +166,8 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
     vm.error("Cannot multiply " & typeName(left) & " and " & typeName(right), node.line, node.col)
 
   of "/":
+    when defined(nimmyNoFloats):
+      vm.error("Float division is disabled in this build, use div", node.line, node.col)
     if left.kind in {IntValue, FloatValue} and right.kind in {IntValue, FloatValue}:
       let r = toFloat(right)
       if r == 0:

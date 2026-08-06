@@ -20,6 +20,16 @@ The entire implementation is just a couple of files, making it easy to integrate
 
 - **Sandboxed execution** — Safe to run untrusted scripts
 - **Deterministic** — Tables and object fields keep insertion order, so iteration is reproducible across runs and platforms
+
+## Fully deterministic builds
+
+Nimmy has no random number generation built in, and tables keep insertion order. For lockstep simulations that must stay bit identical across platforms, compile the host with `-d:nimmyNoFloats`. That build:
+
+- Rejects float literals at lex time.
+- Rejects float division `/`. Use `div` for integer division.
+- Does not register the float math builtins (`sin`, `sqrt`, `pow`, `float()` and friends).
+
+The integer helpers `isqrt(x)`, `div` and the `%` modulo operator are always available, so scripts can still do distance math. Scripts that want randomness can implement their own seeded pseudo random generator in script code.
 - **Embeddable** — Designed to be embedded in host applications
 - **Minimal footprint** — Small codebase, easy to audit and maintain
 - **Familiar syntax** — If you know Nim or Python, you'll feel at home

@@ -332,7 +332,7 @@ proc rangeExpr(P: Parser): Node =
 proc factor(P: Parser): Node =
   result = P.rangeExpr()
   
-  while P.checkAny({StarToken, SlashToken, PercentToken}):
+  while P.checkAny({StarToken, SlashToken, PercentToken, DivToken}):
     let line = P.current.line
     let col = P.current.col
     let op = P.advance().lexeme

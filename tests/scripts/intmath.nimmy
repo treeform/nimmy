@@ -1,0 +1,8 @@
+echo 7 div 2
+echo -9 div 2
+echo isqrt(0)
+echo isqrt(1)
+echo isqrt(15)
+echo isqrt(16)
+echo isqrt(1000000)
+echo 7 % 3

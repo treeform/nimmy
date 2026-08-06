@@ -31,6 +31,7 @@ type
     NotToken,          # not
     AndToken,          # and
     OrToken,           # or
+    DivToken,          # div
     TypeToken,         # type
     ObjectToken,       # object
 
