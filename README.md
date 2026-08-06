@@ -128,6 +128,10 @@ the interpreter is written to fail safe:
   parsing (and the bounded AST can't overflow the evaluator either).
 - **Bounded memory.** Script allocations are metered against `vm.maxAllocations`
   so a script cannot exhaust host memory.
+- **Sealed globals.** A script can't replace a global the host marks sealed —
+  `echo` is sealed by default, and a host seals its own capabilities so it can
+  trust `getGlobal` still returns the real proc. A script may still shadow a
+  sealed name with a local or parameter.
 
 **These limits are on by default**, so a freshly constructed VM is hostile-safe
 without any host configuration — an infinite loop, runaway recursion, or memory
@@ -157,6 +161,24 @@ creates (string and collection payloads, in approximate bytes). It complements
 `s = s & s` in a loop, which doubles memory each statement — the allocation
 budget stops it. The count is deterministic across platforms, so it does not
 break lockstep builds.
+
+### Sealing host capabilities
+
+Register the APIs you expose to scripts as **sealed** so a script cannot swap
+them out from under you — useful when the host later looks a global back up by
+name and assumes it is still the real proc:
+
+```nim
+nvm.addProc("sendTo", sendToImpl, sealed = true)  # script can't redefine sendTo
+nvm.setGlobal("world", worldValue, sealed = true) # ...or reassign world
+# nvm.sealGlobal("existing")   # seal a name defined earlier
+# nvm.sealAllGlobals()         # strict: seal every builtin and host API
+```
+
+`echo` is sealed out of the box; the convenience builtins (`len`, `str`, `add`,
+…) are left unsealed so scripts can use those common names as their own
+variables. A sealed name can still be shadowed by a local or parameter — that
+binding is private to the script and never touches the host's global.
 
 > **Do not compile the host with `-d:danger` when running untrusted scripts.**
 > `-d:danger` removes the runtime range/field checks the sandbox relies on.

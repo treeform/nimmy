@@ -274,6 +274,80 @@ proc runSecurityTests*(): (int, int) =
       got = "error: " & ex.msg
     check("realistic nesting still evaluates", got == "41", got)
 
+  # -- Sealed globals: scripts can't clobber protected host capabilities. -------
+  proc rejectsSeal(name, source: string) =
+    let nvm = newNimmyVM()
+    var msg = ""
+    try:
+      discard nvm.run(source)
+    except CatchableError as e:
+      msg = e.msg
+    check(name, "sealed" in msg, msg)
+  # echo is sealed by default and cannot be redefined or reassigned.
+  rejectsSeal("sealed echo rejects proc redefinition",
+    "proc echo(x) =\n  return 0\n")
+  rejectsSeal("sealed echo rejects var redefinition", "var echo = 1\n")
+  rejectsSeal("sealed echo rejects assignment", "echo = 1\n")
+  block:
+    # Convenience builtins are NOT sealed: scripts may still use those names.
+    let nvm = newNimmyVM()
+    var got = ""
+    try:
+      got = nvm.run("proc len(x) =\n  return 999\necho len([1, 2, 3])\n").strip()
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("unsealed builtins remain shadowable", got == "999", got)
+  block:
+    let nvm = newNimmyVM()
+    var got = ""
+    try:
+      got = nvm.run("let str = \"hi\"\necho str\n").strip()
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("builtin name usable as a variable", got == "hi", got)
+  block:
+    # A host can seal its own API; scripts can't replace it, and the host still
+    # reads back the real proc.
+    let nvm = newNimmyVM()
+    nvm.addProc("sendTo", proc(args: seq[Value]): Value = nilValue(), sealed = true)
+    var msg = ""
+    try:
+      discard nvm.run("proc sendTo(x) =\n  return 0\n")
+    except CatchableError as e:
+      msg = e.msg
+    let stillReal = nvm.getGlobal("sendTo") != nil and
+      nvm.getGlobal("sendTo").kind == NativeProcValue
+    check("host can seal its API and trust getGlobal",
+          "sealed" in msg and stillReal, msg)
+  block:
+    let nvm = newNimmyVM()
+    nvm.setGlobal("config", intValue(42), sealed = true)
+    var msg = ""
+    try:
+      discard nvm.run("config = 0\n")
+    except CatchableError as e:
+      msg = e.msg
+    check("sealed setGlobal blocks reassignment", "sealed" in msg, msg)
+  block:
+    # sealAllGlobals locks the whole stdlib for hosts that want strict integrity.
+    let nvm = newNimmyVM()
+    nvm.sealAllGlobals()
+    var msg = ""
+    try:
+      discard nvm.run("proc len(x) =\n  return 0\n")
+    except CatchableError as e:
+      msg = e.msg
+    check("sealAllGlobals seals the whole stdlib", "sealed" in msg, msg)
+  block:
+    # A parameter may shadow a sealed name locally without touching the global.
+    let nvm = newNimmyVM()
+    var got = ""
+    try:
+      got = nvm.run("proc f(echo) =\n  return echo + 1\necho f(10)\n").strip()
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("sealed name can be shadowed as a parameter", got == "11", got)
+
   # -- Safe by default: a freshly built VM needs no host configuration. --------
   block:
     let nvm = newNimmyVM()

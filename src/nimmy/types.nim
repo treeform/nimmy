@@ -261,6 +261,7 @@ type
     parent*: Scope
     vars*: OrderedTableRef[string, Value]
     isConst*: OrderedTableRef[string, bool]
+    sealed*: OrderedTableRef[string, bool]  ## Names a script may not redefine or assign
 
   # Error types
   NimmyError* = object of CatchableError
@@ -385,11 +386,30 @@ proc rangeValue*(start, stop: int64, inclusive: bool): Value =
 
 # Scope operations
 proc newScope*(parent: Scope = nil): Scope =
-  Scope(parent: parent, vars: newOrderedTable[string, Value](), isConst: newOrderedTable[string, bool]())
+  Scope(parent: parent, vars: newOrderedTable[string, Value](),
+        isConst: newOrderedTable[string, bool](),
+        sealed: newOrderedTable[string, bool]())
 
-proc define*(scope: Scope, name: string, value: Value, isConst: bool = false) =
+proc define*(scope: Scope, name: string, value: Value,
+             isConst: bool = false, sealed: bool = false) =
   scope.vars[name] = value
   scope.isConst[name] = isConst
+  if sealed:
+    scope.sealed[name] = true
+
+proc isSealedHere*(scope: Scope, name: string): bool =
+  ## Whether `name` is sealed in this exact scope (not a parent).
+  scope.sealed.getOrDefault(name, false)
+
+proc isSealed*(scope: Scope, name: string): bool =
+  ## Whether the binding `name` resolves to is sealed. A shadowing binding in an
+  ## inner scope is not sealed, so scripts can still use the name locally.
+  var current = scope
+  while current != nil:
+    if current.vars.hasKey(name):
+      return current.sealed.getOrDefault(name, false)
+    current = current.parent
+  false
 
 proc lookup*(scope: Scope, name: string): Value =
   var current = scope

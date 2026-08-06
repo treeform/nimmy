@@ -114,7 +114,8 @@ proc newVM*(): VM =
       let line = parts.join(" ")
       chargeAllocation(line.len + 1)  # bound unbounded output growth
       vm.output.add(line)
-      nilValue()
+      nilValue(),
+    sealed = true  # scripts cannot replace echo
   )
   return vm
 
@@ -130,6 +131,14 @@ proc chargeStep(vm: VM) =
   ## runaway loop aborts on either path. Builtins and value rendering charge the
   ## same budget directly via chargeInstructions.
   chargeInstructions(1)
+
+proc defineChecked(vm: VM, name: string, value: Value, isConst = false) =
+  ## Define a script-level binding, refusing to clobber a global the host sealed
+  ## (builtins, host APIs). Only blocks redefinition in the scope that holds the
+  ## sealed name, so a script can still use the name as a local or parameter.
+  if vm.currentScope.isSealedHere(name):
+    vm.error("Cannot redefine sealed global '" & name & "'", vm.currentLine, 0)
+  vm.currentScope.define(name, value, isConst = isConst)
 
 proc steps*(vm: VM): int =
   ## Instructions charged in the current run (for host introspection).
@@ -563,12 +572,12 @@ proc evalExpr(vm: VM, node: Node): Value =
 
   of LetStmtNode:
     let value = vm.evalExpr(node.varValue)
-    vm.currentScope.define(node.varName, value, isConst = true)
+    vm.defineChecked(node.varName, value, isConst = true)
     return nilValue()
 
   of VarStmtNode:
     let value = vm.evalExpr(node.varValue)
-    vm.currentScope.define(node.varName, value, isConst = false)
+    vm.defineChecked(node.varName, value, isConst = false)
     return nilValue()
 
   of AssignNode:
@@ -653,7 +662,7 @@ proc evalExpr(vm: VM, node: Node): Value =
 
   of ProcDefNode:
     let procVal = procValue(node.procName, node.procParams, node.procBody, vm.currentScope)
-    vm.currentScope.define(node.procName, procVal)
+    vm.defineChecked(node.procName, procVal)
     return nilValue()
 
   of TypeDefNode:
@@ -662,7 +671,7 @@ proc evalExpr(vm: VM, node: Node): Value =
       for field in node.typeBody.objectFields:
         fields.add(field.fieldName)
     let typeVal = typeValue(node.typeName, fields)
-    vm.currentScope.define(node.typeName, typeVal)
+    vm.defineChecked(node.typeName, typeVal)
     return nilValue()
 
   else:
@@ -680,6 +689,8 @@ proc assignToTarget(vm: VM, target: Node, value: Value) =
   case target.kind
   of IdentNode:
     let name = target.name
+    if vm.currentScope.isSealed(name):
+      vm.error(fmt"Cannot assign to sealed global '{name}'", target.line, target.col)
     if vm.currentScope.isConstant(name):
       vm.error(fmt"Cannot assign to constant '{name}'", target.line, target.col)
     if not vm.currentScope.assign(name, value):
@@ -719,7 +730,7 @@ proc execAssign(vm: VM, node: Node) =
 
 proc execProcDef(vm: VM, node: Node) =
   let procVal = procValue(node.procName, node.procParams, node.procBody, vm.currentScope)
-  vm.currentScope.define(node.procName, procVal)
+  vm.defineChecked(node.procName, procVal)
 
 proc execTypeDef(vm: VM, node: Node) =
   var fields: seq[string] = @[]
@@ -727,7 +738,7 @@ proc execTypeDef(vm: VM, node: Node) =
     for field in node.typeBody.objectFields:
       fields.add(field.fieldName)
   let typeVal = typeValue(node.typeName, fields)
-  vm.currentScope.define(node.typeName, typeVal)
+  vm.defineChecked(node.typeName, typeVal)
 
 # =============================================================================
 # Stepping API
@@ -845,7 +856,7 @@ proc advanceFrame(vm: VM) =
 
     # Assign return value if we have a target
     if varName != "":
-      vm.currentScope.define(varName, returnVal, isConst = varIsConst)
+      vm.defineChecked(varName, returnVal, isConst = varIsConst)
     elif assignTarget != nil:
       # Handle assignment target (for cases like x = foo())
       if assignTarget.kind == IdentNode:
@@ -949,11 +960,11 @@ proc step*(vm: VM) =
         return
       else:
         # Native function call - use result directly
-        vm.currentScope.define(varName, callResult, isConst = isConst)
+        vm.defineChecked(varName, callResult, isConst = isConst)
     else:
       # Normal expression
       let value = vm.evalExpr(valueNode)
-      vm.currentScope.define(varName, value, isConst = isConst)
+      vm.defineChecked(varName, value, isConst = isConst)
 
     frame.stmtIndex += 1
     vm.updateLine()
@@ -1149,7 +1160,7 @@ proc step*(vm: VM) =
 
         # Assign return value if we have a target
         if varName != "":
-          vm.currentScope.define(varName, returnVal, isConst = varIsConst)
+          vm.defineChecked(varName, returnVal, isConst = varIsConst)
         elif assignTarget != nil:
           if assignTarget.kind == IdentNode:
             discard vm.currentScope.assign(assignTarget.name, returnVal)
@@ -1372,7 +1383,7 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
           # Variable declaration in interactive mode
           let varName = stmt.varName
           let varValue = if stmt.varValue.isNil: nilValue() else: vm.evalExpr(stmt.varValue)
-          evalScope.define(varName, varValue)
+          vm.defineChecked(varName, varValue)
         of AssignNode:
           # Assignment (dispatch on target kind; never assume a bare name)
           let val = vm.evalExpr(stmt.assignValue)
@@ -1413,8 +1424,12 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
 # Utility Functions
 # =============================================================================
 
-proc addProc*(vm: VM, name: string, p: NativeProc) =
-  vm.globalScope.define(name, nativeProcValue(name, p))
+proc addProc*(vm: VM, name: string, p: NativeProc, sealed = false) =
+  ## Register a native proc. Pass sealed = true to protect a host capability so
+  ## scripts can shadow it locally but never replace the global binding, letting
+  ## the host trust the name stays the real proc. Convenience builtins are left
+  ## unsealed so scripts can still use those names (e.g. `let str = ...`).
+  vm.globalScope.define(name, nativeProcValue(name, p), sealed = sealed)
 
 proc getOutput*(vm: VM): string =
   vm.output.join("\n")
