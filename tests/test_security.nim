@@ -178,6 +178,58 @@ proc runSecurityTests*(): (int, int) =
       got = "error: " & e.msg
     check("lazy for loops compute correct results", got == "5050\n2", got)
 
+  # -- Rendering: cycles and deep nesting must not overflow the host stack. -----
+  proc rendersWithoutCrash(name, source, wantSubstr: string) =
+    let nvm = newNimmyVM()
+    var got = ""
+    var crashed = false
+    try:
+      got = nvm.run(source).strip()
+    except CatchableError as e:
+      got = "error: " & e.msg  # a catchable error is fine; a crash would abort
+      crashed = true
+    check(name, (not crashed) and wantSubstr in got, got)
+  # A self-referential array/table renders as a cycle marker instead of
+  # recursing forever on the C stack.
+  rendersWithoutCrash("cyclic array renders without crashing",
+    "var a = [1, 2]\na[0] = a\necho a\n", "...")
+  rendersWithoutCrash("cyclic table renders without crashing",
+    "var t = {\"k\": 1}\nt[\"k\"] = t\necho t\n", "...")
+  # Very deep (but acyclic) nesting is capped by depth, not crashed.
+  rendersWithoutCrash("deeply nested value renders without crashing",
+    "var a = [0]\nfor i in 0 ..< 100000:\n  a = [a]\necho a\n", "...")
+  block:
+    # A shared (non-cyclic) value must still render fully — only true cycles
+    # collapse to the marker.
+    let nvm = newNimmyVM()
+    var got = ""
+    try:
+      got = nvm.run("var x = [1]\necho [x, x]\n").strip()
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("shared non-cyclic value renders fully", got == "[[1], [1]]", got)
+
+  # -- Builtins and rendering charge the instruction budget. --------------------
+  block:
+    # A single statement that calls builtins charges more than one instruction,
+    # proving native calls count (1 statement + echo + two len calls).
+    let nvm = newNimmyVM()
+    discard nvm.run("echo len(\"abc\") + len(\"de\")\n")
+    check("builtins charge the instruction budget", nvm.vm.steps >= 4,
+          "steps=" & $nvm.vm.steps)
+  # A quadratic scan (contains in a loop) is bounded per comparison, not left to
+  # run to completion.
+  expectContainedError(
+    "quadratic contains scan is bounded",
+    "var a = []\nfor i in 0 ..< 5000:\n  a = add(a, i)\n" &
+      "for j in 0 ..< 5000:\n  var found = contains(a, -1)\n",
+    "Maximum step count exceeded", maxSteps = 200_000)
+  # A loop of pure builtin calls is bounded even though a host set only maxSteps.
+  expectContainedError(
+    "loop of builtin calls is bounded by maxSteps",
+    "var i = 0\nwhile i < 100000:\n  echo len(\"x\")\n  i = i + 1\n",
+    "Maximum step count exceeded", maxSteps = 500)
+
   # -- Safe by default: a freshly built VM needs no host configuration. --------
   block:
     let nvm = newNimmyVM()

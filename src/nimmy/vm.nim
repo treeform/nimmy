@@ -83,7 +83,6 @@ type
     # These default to finite safety nets (see DefaultMax* consts); set any to
     # 0 to disable that limit.
     maxSteps*: int               ## Statement budget, 0 means unlimited
-    steps*: int                  ## Statements executed so far
     maxCallDepth*: int           ## Cap on native evaluation recursion depth
     evalDepth: int               ## Current native evaluation recursion depth
     maxAllocations*: int         ## Allocation budget in units, 0 means unlimited
@@ -102,7 +101,6 @@ proc newVM*(): VM =
     isFinished: true,
     breakpoints: initHashSet[int](),
     maxSteps: DefaultMaxSteps,
-    steps: 0,
     maxCallDepth: DefaultMaxCallDepth,
     evalDepth: 0,
     maxAllocations: DefaultMaxAllocations
@@ -127,12 +125,15 @@ proc error(vm: VM, msg: string, line, col: int) =
   raise e
 
 proc chargeStep(vm: VM) =
-  ## Count one unit of work against the statement budget. Called per statement
+  ## Count one unit of work against the instruction budget. Called per statement
   ## in step() and per loop iteration in the expression-context evaluator, so a
-  ## runaway loop aborts on either path.
-  inc vm.steps
-  if vm.maxSteps > 0 and vm.steps > vm.maxSteps:
-    vm.error("Maximum step count exceeded", vm.currentLine, 0)
+  ## runaway loop aborts on either path. Builtins and value rendering charge the
+  ## same budget directly via chargeInstructions.
+  chargeInstructions(1)
+
+proc steps*(vm: VM): int =
+  ## Instructions charged in the current run (for host introspection).
+  instructionsUsed()
 
 # =============================================================================
 # Expression Evaluation (non-stepping, used within a single step)
@@ -266,6 +267,7 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
     of StringValue:
       if left.kind != StringValue:
         vm.error("'in' requires string on left for string search", node.line, node.col)
+      chargeInstructions(right.strVal.len)  # substring scan is O(n)
       return boolValue(left.strVal in right.strVal)
     of TableValue:
       if left.kind != StringValue:
@@ -354,6 +356,7 @@ proc evalDot(vm: VM, node: Node): Value =
   if funcVal != nil:
     if funcVal.kind == NativeProcValue:
       # Call native proc with obj as argument (UFCS without parens)
+      chargeInstructions(1)
       return funcVal.nativeProc(@[obj])
     elif funcVal.kind == ProcValue:
       # Call user-defined proc with obj as argument (UFCS without parens)
@@ -415,6 +418,7 @@ proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value]) =
     args.add(vm.evalExpr(arg))
 
   if callee.kind == NativeProcValue:
+    chargeInstructions(1)
     return (callee.nativeProc(args), false, nil, @[])
 
   if callee.kind == TypeValue:
@@ -868,7 +872,7 @@ proc load*(vm: VM, ast: Node) =
   vm.controlFlow = NoneFlow
   vm.returnValue = nil
   vm.currentScope = vm.globalScope
-  vm.steps = 0
+  resetInstructions(vm.maxSteps)
   resetAllocations(vm.maxAllocations)
 
   var stmts: seq[Node] = @[]
@@ -1354,6 +1358,7 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
 
   # Use current scope for evaluation (so we can inspect local variables)
   let evalScope = if vm.currentScope != nil: vm.currentScope else: vm.globalScope
+  resetInstructions(vm.maxSteps)
   resetAllocations(vm.maxAllocations)
 
   # Try to evaluate

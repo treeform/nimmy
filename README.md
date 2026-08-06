@@ -110,12 +110,17 @@ the interpreter is written to fail safe:
 - **Memory safety.** Every array/table read and write is bounds- and
   type-checked. An out-of-bounds index, a negative index, or a wrong-typed key
   raises a catchable `RuntimeError` — it can never read or write past a buffer.
+  Rendering a value (`$` / `echo`) detects cycles and caps nesting depth, so a
+  self-referential structure prints a `...` marker instead of overflowing the
+  host stack.
 - **Catchable failures.** Script errors are `RuntimeError` (a
   `CatchableError`), so a host can wrap `nvm.run(...)` in `try/except
   CatchableError` and keep running. A single bad script cannot take down the
   host process.
-- **Bounded execution.** A statement budget (`vm.maxSteps`) stops infinite
-  loops.
+- **Bounded execution.** An instruction budget (`vm.maxSteps`) stops infinite
+  loops. Native builtins, `echo`, element comparisons, and value rendering all
+  charge against it, so a single statement cannot do unbounded work (e.g. a
+  `contains` scan in a tight loop).
 - **Bounded recursion.** Native recursion is capped by `vm.maxCallDepth` so a
   runaway recursive script raises an error instead of overflowing the host's C
   stack.

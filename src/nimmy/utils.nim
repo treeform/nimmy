@@ -2,73 +2,86 @@
 ## Utility functions for the Nimmy scripting language
 
 import types
-import std/[strformat, strutils, tables]
+import std/[strformat, strutils, tables, sets]
 
 # Forward declarations
-proc valueRepr*(v: Value): string
 proc typeName*(v: Value): string
 
-# Convert Value to string for display
-proc `$`*(v: Value): string =
+const MaxRenderDepth = 512
+  ## Cap on nesting depth while rendering a value, so a deeply nested (but
+  ## acyclic) structure cannot overflow the host's C stack.
+
+# Render a value to a string. `quoted` puts quotes around strings (debug repr);
+# `seen` holds the containers on the current path so cycles are detected instead
+# of recursed into forever, and `depth` backstops pathologically deep nesting.
+# Every container node charges the instruction budget, so rendering a huge
+# structure is bounded like any other work.
+proc render(v: Value, seen: var HashSet[pointer], quoted: bool, depth: int): string =
   if v.isNil:
     return "nil"
   case v.kind
   of NilValue:
-    result = "nil"
+    return "nil"
   of BoolValue:
-    result = $v.boolVal
+    return $v.boolVal
   of IntValue:
-    result = $v.intVal
+    return $v.intVal
   of FloatValue:
-    result = $v.floatVal
+    return $v.floatVal
   of StringValue:
-    result = v.strVal
+    return (if quoted: "\"" & v.strVal & "\"" else: v.strVal)
+  of ProcValue:
+    return fmt"<proc {v.procName}>"
+  of NativeProcValue:
+    return fmt"<native proc {v.nativeName}>"
+  of TypeValue:
+    return fmt"<type {v.typeNameVal}>"
+  of RangeValue:
+    return (if v.rangeInclusive: fmt"{v.rangeStart}..{v.rangeEnd}"
+            else: fmt"{v.rangeStart}..<{v.rangeEnd}")
   of ArgsValue:
     var parts: seq[string]
     for arg in v.argsVal:
-      parts.add($arg)
-    result = parts.join(" ")
-  of ArrayValue:
+      parts.add(render(arg, seen, false, depth))
+    return parts.join(" ")
+  of ArrayValue, TableValue, SetValue, ObjectValue:
+    chargeInstructions(1)
+    let identity = cast[pointer](v)
+    if depth >= MaxRenderDepth or identity in seen:
+      return "..."  # cyclic or too deeply nested
+    seen.incl(identity)
     var parts: seq[string]
-    for elem in v.arrayVal:
-      parts.add(valueRepr(elem))
-    result = "[" & parts.join(", ") & "]"
-  of TableValue:
-    var parts: seq[string]
-    for k, val in v.tableVal:
-      parts.add("\"" & k & "\": " & valueRepr(val))
-    result = "{" & parts.join(", ") & "}"
-  of SetValue:
-    var parts: seq[string]
-    for elem in v.setVal:
-      parts.add(valueRepr(elem))
-    result = "{" & parts.join(", ") & "}"
-  of ObjectValue:
-    var parts: seq[string]
-    for k, val in v.objFields:
-      parts.add(fmt"{k}: {valueRepr(val)}")
-    result = fmt"{v.objType}(" & parts.join(", ") & ")"
-  of ProcValue:
-    result = fmt"<proc {v.procName}>"
-  of NativeProcValue:
-    result = fmt"<native proc {v.nativeName}>"
-  of TypeValue:
-    result = fmt"<type {v.typeNameVal}>"
-  of RangeValue:
-    if v.rangeInclusive:
-      result = fmt"{v.rangeStart}..{v.rangeEnd}"
+    case v.kind
+    of ArrayValue:
+      for elem in v.arrayVal:
+        parts.add(render(elem, seen, true, depth + 1))
+      result = "[" & parts.join(", ") & "]"
+    of TableValue:
+      for k, val in v.tableVal:
+        parts.add("\"" & k & "\": " & render(val, seen, true, depth + 1))
+      result = "{" & parts.join(", ") & "}"
+    of SetValue:
+      for elem in v.setVal:
+        parts.add(render(elem, seen, true, depth + 1))
+      result = "{" & parts.join(", ") & "}"
+    of ObjectValue:
+      for k, val in v.objFields:
+        parts.add(fmt"{k}: " & render(val, seen, true, depth + 1))
+      result = fmt"{v.objType}(" & parts.join(", ") & ")"
     else:
-      result = fmt"{v.rangeStart}..<{v.rangeEnd}"
+      discard
+    seen.excl(identity)
+    return result
+
+# Convert Value to string for display
+proc `$`*(v: Value): string =
+  var seen = initHashSet[pointer]()
+  render(v, seen, false, 0)
 
 # Debug representation (shows quotes around strings)
 proc valueRepr*(v: Value): string =
-  if v.isNil:
-    return "nil"
-  case v.kind
-  of StringValue:
-    "\"" & v.strVal & "\""
-  else:
-    $v
+  var seen = initHashSet[pointer]()
+  render(v, seen, true, 0)
 
 # Truthiness check
 proc isTruthy*(v: Value): bool =
@@ -102,6 +115,10 @@ proc isTruthy*(v: Value): bool =
 
 # Equality check
 proc equals*(a, b: Value): bool =
+  # One instruction per comparison, so the scans built on equals — contains,
+  # `in`, set union/intersection/difference, incl/excl, `==` on nested data —
+  # are all bounded by the instruction budget instead of running unaccounted.
+  chargeInstructions(1)
   if a.isNil and b.isNil:
     return true
   if a.isNil or b.isNil:

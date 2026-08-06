@@ -307,6 +307,34 @@ proc resetAllocations*(limit: int) =
   allocatedUnits = 0
   allocationLimit = limit
 
+# Instruction accounting
+#
+# The statement/step budget, exposed thread-locally so that work done outside
+# the statement stepper — native builtins and value rendering ($ / echo) — can
+# charge against it too. A statement that calls a builtin doing O(n) work, or
+# renders a large structure, is bounded instead of running unaccounted.
+var
+  instructionCount* {.threadvar.}: int  ## Cumulative instructions this run.
+  instructionLimit* {.threadvar.}: int  ## Cap, 0 means unlimited.
+
+proc chargeInstructions*(n: int) =
+  ## Account for `n` instructions and enforce the limit. Raises a catchable
+  ## RuntimeError when the budget is exhausted.
+  if n <= 0:
+    return
+  instructionCount += n
+  if instructionLimit > 0 and instructionCount > instructionLimit:
+    raise newException(RuntimeError, "Maximum step count exceeded")
+
+proc instructionsUsed*(): int =
+  ## Instructions charged since the current run began.
+  instructionCount
+
+proc resetInstructions*(limit: int) =
+  ## Begin a fresh instruction budget for a run.
+  instructionCount = 0
+  instructionLimit = limit
+
 # Value constructors
 proc nilValue*(): Value =
   Value(kind: NilValue)
