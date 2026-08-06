@@ -117,19 +117,29 @@ the interpreter is written to fail safe:
 - **Bounded recursion.** Native recursion is capped by `vm.maxCallDepth`
   (default 256) so a runaway recursive script raises an error instead of
   overflowing the host's C stack.
+- **Bounded memory.** Script allocations are metered against `vm.maxAllocations`
+  so a script cannot exhaust host memory (see below).
 
 To run genuinely hostile scripts, the host must also bound execution time and
-allocation, which are unlimited by default:
+memory, which are unlimited by default:
 
 ```nim
 let nvm = newNimmyVM()
-nvm.vm.maxSteps = 1_000_000   # abort after N statements (0 = unlimited)
-nvm.vm.maxCallDepth = 256     # native recursion cap
+nvm.vm.maxSteps = 1_000_000        # abort after N statements (0 = unlimited)
+nvm.vm.maxCallDepth = 256          # native recursion cap
+nvm.vm.maxAllocations = 64_000_000 # allocation budget in units (0 = unlimited)
 try:
   discard nvm.run(untrustedSource)
 except CatchableError as e:
   echo "script rejected: ", e.msg
 ```
+
+`maxAllocations` is a deterministic budget on the heap-backed data a script
+creates (string and collection payloads, in approximate bytes). It complements
+`maxSteps`: a statement count alone cannot stop super-linear growth such as
+`s = s & s` in a loop, which doubles memory each statement — the allocation
+budget stops it. The count is deterministic across platforms, so it does not
+break lockstep builds.
 
 > **Do not compile the host with `-d:danger` when running untrusted scripts.**
 > `-d:danger` removes the runtime range/field checks the sandbox relies on.

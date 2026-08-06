@@ -62,6 +62,7 @@ type
     steps*: int                  ## Statements executed so far
     maxCallDepth*: int           ## Cap on native evaluation recursion depth
     evalDepth: int               ## Current native evaluation recursion depth
+    maxAllocations*: int         ## Allocation budget in units, 0 means unlimited
 
 proc newVM*(): VM =
   let global = newScope()
@@ -79,7 +80,8 @@ proc newVM*(): VM =
     maxSteps: 0,
     steps: 0,
     maxCallDepth: 256,
-    evalDepth: 0
+    evalDepth: 0,
+    maxAllocations: 0
   )
   vm.globalScope.define(
     "echo",
@@ -87,7 +89,9 @@ proc newVM*(): VM =
       var parts: seq[string] = @[]
       for arg in args:
         parts.add($arg)
-      vm.output.add(parts.join(" "))
+      let line = parts.join(" ")
+      chargeAllocation(line.len + 1)  # bound unbounded output growth
+      vm.output.add(line)
       nilValue()
   )
   return vm
@@ -791,6 +795,8 @@ proc load*(vm: VM, ast: Node) =
   vm.controlFlow = NoneFlow
   vm.returnValue = nil
   vm.currentScope = vm.globalScope
+  vm.steps = 0
+  resetAllocations(vm.maxAllocations)
 
   var stmts: seq[Node] = @[]
   if ast.kind == ProgramNode:
@@ -1273,6 +1279,7 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
 
   # Use current scope for evaluation (so we can inspect local variables)
   let evalScope = if vm.currentScope != nil: vm.currentScope else: vm.globalScope
+  resetAllocations(vm.maxAllocations)
 
   # Try to evaluate
   try:

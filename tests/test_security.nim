@@ -27,12 +27,14 @@ proc check(name: string, cond: bool, detail = "") =
     echo "  FAIL: " & name & (if detail.len > 0: "  (" & detail & ")" else: "")
     securityFailed += 1
 
-proc expectContainedError(name, source, wanted: string, maxSteps = 0) =
+proc expectContainedError(name, source, wanted: string,
+                          maxSteps = 0, maxAllocations = 0) =
   ## The script must raise a catchable error whose message contains `wanted`.
   ## A missing error means the sandbox was bypassed; a non-matching message
   ## means it failed in an unexpected way.
   let nvm = newNimmyVM()
   nvm.vm.maxSteps = maxSteps
+  nvm.vm.maxAllocations = maxAllocations
   var msg = ""
   var caught = false
   try:
@@ -100,6 +102,51 @@ proc runSecurityTests*(): (int, int) =
     "unbounded array growth bounded by maxSteps",
     "var a = [0]\nwhile true:\n  a = add(a, 0)\n",
     "step count exceeded", maxSteps = 100_000)
+
+  # -- Allocation budget: bound memory, including super-linear growth. ----------
+  # Exponential string growth (`s = s & s`) doubles memory per statement, so a
+  # step budget cannot stop it before OOM; maxAllocations can.
+  expectContainedError(
+    "exponential string growth bounded by maxAllocations",
+    "var s = \"x\"\nwhile true:\n  s = s & s\n",
+    "Maximum allocation exceeded",
+    maxSteps = 1_000_000, maxAllocations = 10_000_000)
+  # Unbounded array growth is caught by the allocation budget too.
+  expectContainedError(
+    "array growth bounded by maxAllocations",
+    "var a = [0]\nwhile true:\n  a = add(a, 0)\n",
+    "Maximum allocation exceeded",
+    maxSteps = 1_000_000, maxAllocations = 1_000_000)
+  # Unbounded output is bounded as well.
+  expectContainedError(
+    "unbounded output bounded by maxAllocations",
+    "var s = \"xxxxxxxxxx\"\nwhile true:\n  echo s\n  s = s & s\n",
+    "Maximum allocation exceeded",
+    maxSteps = 1_000_000, maxAllocations = 10_000_000)
+
+  # A generous budget does not disturb an ordinary script, and the counter is
+  # deterministic: the same script charges the same amount every run.
+  block:
+    proc allocOf(src: string): int =
+      let nvm = newNimmyVM()
+      discard nvm.run(src)
+      allocationsUsed()
+    let src = "var a = []\nfor i in 0 ..< 100:\n  a = add(a, i * i)\necho a.len\n"
+    let a1 = allocOf(src)
+    let a2 = allocOf(src)
+    check("allocation accounting is deterministic", a1 == a2 and a1 > 0,
+          "a1=" & $a1 & " a2=" & $a2)
+  block:
+    let nvm = newNimmyVM()
+    nvm.vm.maxAllocations = 10_000_000
+    var ok = false
+    var got = ""
+    try:
+      got = nvm.run("var s = \"\"\nfor i in 0 ..< 50:\n  s = s & \"ab\"\necho s.len\n").strip()
+      ok = got == "100"
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("ordinary script runs within a generous allocation budget", ok, got)
 
   # -- Legitimate recursion must still work under the default depth cap. --------
   block:

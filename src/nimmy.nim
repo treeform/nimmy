@@ -112,6 +112,7 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "add() takes exactly 2 arguments")
     if args[0].kind != ArrayValue:
       raise newException(RuntimeError, "First argument to add() must be an array")
+    chargeAllocation(8)  # account for the appended element
     args[0].arrayVal.add(args[1])
     return args[0]
   
@@ -213,6 +214,7 @@ proc newNimmyVM*(): NimmyVM =
     for existing in args[0].setVal:
       if equals(existing, args[1]):
         return args[0]
+    chargeAllocation(8)  # account for the added set element
     args[0].setVal.add(args[1])
     args[0]
   

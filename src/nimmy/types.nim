@@ -277,6 +277,36 @@ type
     stepMode*: bool
     currentLine*: int
 
+# Allocation accounting
+#
+# A deterministic budget on the heap-backed data a script creates. It bounds
+# memory the way maxSteps bounds execution, and catches super-linear growth
+# (e.g. `s = s & s` in a loop) that a statement count cannot. Counting happens
+# in the value constructors below, so no allocation site can be missed. Units
+# are approximate bytes and are deterministic across platforms (unlike
+# getOccupiedMem), preserving Nimmy's lockstep guarantee.
+var
+  allocatedUnits* {.threadvar.}: int   ## Cumulative units charged this run.
+  allocationLimit* {.threadvar.}: int  ## Cap in units, 0 means unlimited.
+
+proc chargeAllocation*(units: int) =
+  ## Account for `units` of allocation and enforce the limit. Raises a
+  ## catchable RuntimeError when the budget is exhausted.
+  if units <= 0:
+    return
+  allocatedUnits += units
+  if allocationLimit > 0 and allocatedUnits > allocationLimit:
+    raise newException(RuntimeError, "Maximum allocation exceeded")
+
+proc allocationsUsed*(): int =
+  ## Units charged since the current run began.
+  allocatedUnits
+
+proc resetAllocations*(limit: int) =
+  ## Begin a fresh allocation budget for a run.
+  allocatedUnits = 0
+  allocationLimit = limit
+
 # Value constructors
 proc nilValue*(): Value =
   Value(kind: NilValue)
@@ -291,21 +321,26 @@ proc floatValue*(f: float64): Value =
   Value(kind: FloatValue, floatVal: f)
 
 proc stringValue*(s: string): Value =
+  chargeAllocation(s.len + 1)
   Value(kind: StringValue, strVal: s)
 
 proc argsValue*(args: seq[Value]): Value =
   Value(kind: ArgsValue, argsVal: args)
 
 proc arrayValue*(arr: seq[Value]): Value =
+  chargeAllocation(arr.len * 8 + 8)
   Value(kind: ArrayValue, arrayVal: arr)
 
 proc tableValue*(): Value =
+  chargeAllocation(8)
   Value(kind: TableValue, tableVal: newOrderedTable[string, Value]())
 
 proc setValue*(elems: seq[Value]): Value =
+  chargeAllocation(elems.len * 8 + 8)
   Value(kind: SetValue, setVal: elems)
 
 proc objectValue*(typeName: string): Value =
+  chargeAllocation(8)
   Value(kind: ObjectValue, objType: typeName, objFields: newOrderedTable[string, Value]())
 
 proc procValue*(name: string, params: seq[string], body: Node, closure: Scope): Value =
