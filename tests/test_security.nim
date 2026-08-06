@@ -230,6 +230,50 @@ proc runSecurityTests*(): (int, int) =
     "var i = 0\nwhile i < 100000:\n  echo len(\"x\")\n  i = i + 1\n",
     "Maximum step count exceeded", maxSteps = 500)
 
+  # -- Parser: deeply nested input raises a catchable error, never crashes. -----
+  proc parseContained(name, source: string) =
+    let nvm = newNimmyVM()
+    var msg = ""
+    var crashed = true
+    try:
+      discard nvm.run(source)
+      crashed = false  # unexpected: should have been rejected
+    except CatchableError as e:
+      msg = e.msg
+      crashed = false
+    check(name, (not crashed) and "too deep" in msg, msg)
+  block:
+    var e = "1"
+    for i in 0 ..< 5000: e = "1+(" & e & ")"  # deep right-nested arithmetic
+    parseContained("deep expression is contained by the parser", "echo " & e & "\n")
+  block:
+    var p = "1"
+    for i in 0 ..< 5000: p = "(" & p & ")"    # deep parentheses
+    parseContained("deep parentheses are contained by the parser", "echo " & p & "\n")
+  block:
+    var a = "0"
+    for i in 0 ..< 5000: a = "[" & a & "]"    # deep nested array literal
+    parseContained("deep array literal is contained by the parser", "echo " & a & "\n")
+  block:
+    var src = ""
+    var indent = ""
+    for i in 0 ..< 400:                        # deep nested indented blocks
+      src = src & indent & "if true:\n"
+      indent = indent & "  "
+    src = src & indent & "echo 1\n"
+    parseContained("deep block nesting is contained by the parser", src)
+  block:
+    # Realistic nesting still parses and evaluates correctly.
+    let nvm = newNimmyVM()
+    var e = "1"
+    for i in 0 ..< 40: e = "(1+" & e & ")"
+    var got = ""
+    try:
+      got = nvm.run("echo " & e & "\n").strip()
+    except CatchableError as ex:
+      got = "error: " & ex.msg
+    check("realistic nesting still evaluates", got == "41", got)
+
   # -- Safe by default: a freshly built VM needs no host configuration. --------
   block:
     let nvm = newNimmyVM()

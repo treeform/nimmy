@@ -123,7 +123,9 @@ the interpreter is written to fail safe:
   `contains` scan in a tight loop).
 - **Bounded recursion.** Native recursion is capped by `vm.maxCallDepth` so a
   runaway recursive script raises an error instead of overflowing the host's C
-  stack.
+  stack. The parser is likewise depth-limited, so deeply nested input like
+  `((((…))))` raises a catchable `ParseError` instead of crashing during
+  parsing (and the bounded AST can't overflow the evaluator either).
 - **Bounded memory.** Script allocations are metered against `vm.maxAllocations`
   so a script cannot exhaust host memory.
 
