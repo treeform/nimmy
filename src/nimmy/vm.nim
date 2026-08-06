@@ -12,6 +12,19 @@ import utils
 import parser
 import std/[strformat, tables, strutils, sets]
 
+const
+  ## Default resource limits. A freshly constructed VM is hostile-safe out of
+  ## the box — an infinite loop, runaway recursion, or memory bomb aborts with
+  ## a catchable error instead of hanging or OOM'ing the host. Hosts can raise
+  ## any of these, or set it to 0 to disable that limit entirely.
+  ##
+  ## The values are deliberately generous: ordinary scripts never reach them,
+  ## they only stop runaway ones. Multi-tenant hosts running many untrusted
+  ## scripts should tighten them and add OS-level isolation as well.
+  DefaultMaxSteps* = 10_000_000        ## ~seconds of interpreter work
+  DefaultMaxCallDepth* = 256           ## native recursion depth
+  DefaultMaxAllocations* = 256_000_000 ## ~256 MB of script-created data
+
 type
   ControlFlow = enum
     NoneFlow,
@@ -25,15 +38,24 @@ type
     WhileLoopFrame   ## Executing a while loop
     FunctionFrame    ## Inside a function call
 
+  ForIterKind* = enum
+    ForArrayIter     ## Iterate an array's backing elements by index
+    ForStringIter    ## Iterate a string's characters by index
+    ForRangeIter     ## Iterate an integer range lazily (never materialized)
+
   ExecutionFrame* = ref object
     kind*: FrameKind
     stmts: seq[Node]          ## Statements to execute
     stmtIndex: int            ## Current statement index
     scope: Scope              ## Scope for this frame
-    # For loops
+    # For loops (iterated lazily, so a huge range costs O(1) memory)
     forNode: Node             ## The for loop node
-    forValues: seq[Value]     ## Values to iterate over
-    forIndex: int             ## Current iteration index
+    forIterKind: ForIterKind  ## Which kind of iterable this frame walks
+    forArray: seq[Value]      ## ForArrayIter: backing elements (aliased, not copied)
+    forString: string         ## ForStringIter: backing string
+    forIndex: int             ## ForArrayIter/ForStringIter position
+    forRangeCur: int64        ## ForRangeIter current value
+    forRangeEnd: int64        ## ForRangeIter inclusive end
     # While loops
     whileNode: Node           ## The while loop node
     # Functions
@@ -57,6 +79,13 @@ type
     isFinished*: bool            ## Whether execution is complete
     # Debugging
     breakpoints*: HashSet[int]   ## Line numbers with breakpoints
+    # Resource limits (defense against hostile / runaway scripts).
+    # These default to finite safety nets (see DefaultMax* consts); set any to
+    # 0 to disable that limit.
+    maxSteps*: int               ## Statement budget, 0 means unlimited
+    maxCallDepth*: int           ## Cap on native evaluation recursion depth
+    evalDepth: int               ## Current native evaluation recursion depth
+    maxAllocations*: int         ## Allocation budget in units, 0 means unlimited
 
 proc newVM*(): VM =
   let global = newScope()
@@ -70,7 +99,11 @@ proc newVM*(): VM =
     frames: @[],
     currentLine: 0,
     isFinished: true,
-    breakpoints: initHashSet[int]()
+    breakpoints: initHashSet[int](),
+    maxSteps: DefaultMaxSteps,
+    maxCallDepth: DefaultMaxCallDepth,
+    evalDepth: 0,
+    maxAllocations: DefaultMaxAllocations
   )
   vm.globalScope.define(
     "echo",
@@ -78,8 +111,11 @@ proc newVM*(): VM =
       var parts: seq[string] = @[]
       for arg in args:
         parts.add($arg)
-      vm.output.add(parts.join(" "))
-      nilValue()
+      let line = parts.join(" ")
+      chargeAllocation(line.len + 1)  # bound unbounded output growth
+      vm.output.add(line)
+      nilValue(),
+    sealed = true  # scripts cannot replace echo
   )
   return vm
 
@@ -89,6 +125,25 @@ proc error(vm: VM, msg: string, line, col: int) =
   e.col = col
   raise e
 
+proc chargeStep(vm: VM) =
+  ## Count one unit of work against the instruction budget. Called per statement
+  ## in step() and per loop iteration in the expression-context evaluator, so a
+  ## runaway loop aborts on either path. Builtins and value rendering charge the
+  ## same budget directly via chargeInstructions.
+  chargeInstructions(1)
+
+proc defineChecked(vm: VM, name: string, value: Value, isConst = false) =
+  ## Define a script-level binding, refusing to clobber a global the host sealed
+  ## (builtins, host APIs). Only blocks redefinition in the scope that holds the
+  ## sealed name, so a script can still use the name as a local or parameter.
+  if vm.currentScope.isSealedHere(name):
+    vm.error("Cannot redefine sealed global '" & name & "'", vm.currentLine, 0)
+  vm.currentScope.define(name, value, isConst = isConst)
+
+proc steps*(vm: VM): int =
+  ## Instructions charged in the current run (for host introspection).
+  instructionsUsed()
+
 # =============================================================================
 # Expression Evaluation (non-stepping, used within a single step)
 # =============================================================================
@@ -96,6 +151,7 @@ proc error(vm: VM, msg: string, line, col: int) =
 # Forward declarations
 proc evalExpr(vm: VM, node: Node): Value
 proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value])
+proc assignToTarget(vm: VM, target: Node, value: Value)
 
 proc evalBinaryOp(vm: VM, node: Node): Value =
   let left = vm.evalExpr(node.binLeft)
@@ -220,6 +276,7 @@ proc evalBinaryOp(vm: VM, node: Node): Value =
     of StringValue:
       if left.kind != StringValue:
         vm.error("'in' requires string on left for string search", node.line, node.col)
+      chargeInstructions(right.strVal.len)  # substring scan is O(n)
       return boolValue(left.strVal in right.strVal)
     of TableValue:
       if left.kind != StringValue:
@@ -308,20 +365,28 @@ proc evalDot(vm: VM, node: Node): Value =
   if funcVal != nil:
     if funcVal.kind == NativeProcValue:
       # Call native proc with obj as argument (UFCS without parens)
+      chargeInstructions(1)
       return funcVal.nativeProc(@[obj])
     elif funcVal.kind == ProcValue:
       # Call user-defined proc with obj as argument (UFCS without parens)
       if funcVal.procParams.len != 1:
         vm.error("UFCS call requires function with 1 parameter", node.line, node.col)
+      if vm.evalDepth >= vm.maxCallDepth:
+        vm.error("Maximum call depth exceeded", node.line, node.col)
       let savedScope = vm.currentScope
+      inc vm.evalDepth
       vm.currentScope = newScope(funcVal.procClosure)
       vm.currentScope.define(funcVal.procParams[0], obj)
-      var funcResult = vm.evalExpr(funcVal.procBody)
+      var funcResult: Value
+      try:
+        funcResult = vm.evalExpr(funcVal.procBody)
+      finally:
+        dec vm.evalDepth
+        vm.currentScope = savedScope
       if vm.controlFlow == ReturnFlow:
         funcResult = vm.returnValue
         vm.controlFlow = NoneFlow
         vm.returnValue = nil
-      vm.currentScope = savedScope
       return funcResult
 
   if obj.kind == ObjectValue:
@@ -362,6 +427,7 @@ proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value]) =
     args.add(vm.evalExpr(arg))
 
   if callee.kind == NativeProcValue:
+    chargeInstructions(1)
     return (callee.nativeProc(args), false, nil, @[])
 
   if callee.kind == TypeValue:
@@ -412,18 +478,27 @@ proc evalExpr(vm: VM, node: Node): Value =
     let (callResult, needsFrame, callee, args) = vm.evalCallExpr(node)
     if needsFrame:
       # This shouldn't happen during expression evaluation within step
-      # But we handle it by executing the function synchronously
+      # But we handle it by executing the function synchronously.
+      # Depth-cap the native recursion so a hostile script cannot overflow
+      # the host's C stack (an uncatchable crash).
+      if vm.evalDepth >= vm.maxCallDepth:
+        vm.error("Maximum call depth exceeded", node.line, node.col)
       let savedScope = vm.currentScope
+      inc vm.evalDepth
       vm.currentScope = newScope(callee.procClosure)
       for i, param in callee.procParams:
         vm.currentScope.define(param, args[i])
       # Recursively evaluate (fallback for expressions with calls)
-      var funcResult = vm.evalExpr(callee.procBody)
+      var funcResult: Value
+      try:
+        funcResult = vm.evalExpr(callee.procBody)
+      finally:
+        dec vm.evalDepth
+        vm.currentScope = savedScope
       if vm.controlFlow == ReturnFlow:
         funcResult = vm.returnValue
         vm.controlFlow = NoneFlow
         vm.returnValue = nil
-      vm.currentScope = savedScope
       return funcResult
     return callResult
   of IndexNode:
@@ -497,61 +572,64 @@ proc evalExpr(vm: VM, node: Node): Value =
 
   of LetStmtNode:
     let value = vm.evalExpr(node.varValue)
-    vm.currentScope.define(node.varName, value, isConst = true)
+    vm.defineChecked(node.varName, value, isConst = true)
     return nilValue()
 
   of VarStmtNode:
     let value = vm.evalExpr(node.varValue)
-    vm.currentScope.define(node.varName, value, isConst = false)
+    vm.defineChecked(node.varName, value, isConst = false)
     return nilValue()
 
   of AssignNode:
     let value = vm.evalExpr(node.assignValue)
-    if node.assignTarget.kind == IdentNode:
-      discard vm.currentScope.assign(node.assignTarget.name, value)
-    elif node.assignTarget.kind == IndexNode:
-      let obj = vm.evalExpr(node.assignTarget.indexee)
-      let index = vm.evalExpr(node.assignTarget.index)
-      if obj.kind == ArrayValue:
-        obj.arrayVal[index.intVal] = value
-      elif obj.kind == TableValue:
-        obj.tableVal[index.strVal] = value
-    elif node.assignTarget.kind == DotNode:
-      let obj = vm.evalExpr(node.assignTarget.dotLeft)
-      if obj.kind == ObjectValue:
-        obj.objFields[node.assignTarget.dotField] = value
+    vm.assignToTarget(node.assignTarget, value)
     return nilValue()
 
   of ForStmtNode:
     let iter = vm.evalExpr(node.forIter)
-    var values: seq[Value] = @[]
+    let savedScope = vm.currentScope
+
+    # Iterate lazily: produce one loop value at a time instead of materializing
+    # the whole sequence, so a huge range does not allocate up front. Each
+    # iteration charges the step budget so the loop stays bounded here too.
+    template runBody(makeVal: Value): bool =
+      ## Returns true if the loop should stop.
+      vm.chargeStep()
+      vm.currentScope = newScope(savedScope)
+      vm.currentScope.define(node.forVar, makeVal)
+      discard vm.evalExpr(node.forBody)
+      var stop = false
+      if vm.controlFlow == BreakFlow:
+        vm.controlFlow = NoneFlow
+        stop = true
+      elif vm.controlFlow == ContinueFlow:
+        vm.controlFlow = NoneFlow
+      elif vm.controlFlow == ReturnFlow:
+        stop = true
+      stop
+
     case iter.kind
     of RangeValue:
       let s = iter.rangeStart
       let e = if iter.rangeInclusive: iter.rangeEnd else: iter.rangeEnd - 1
-      for i in s..e:
-        values.add(intValue(i))
+      var i = s
+      while i <= e:
+        if runBody(intValue(i)):
+          break
+        if i == e:  # avoid int64 overflow at the top of the range
+          break
+        i += 1
     of ArrayValue:
-      values = iter.arrayVal
+      for val in iter.arrayVal:
+        if runBody(val):
+          break
     of StringValue:
       for c in iter.strVal:
-        values.add(stringValue($c))
+        if runBody(stringValue($c)):
+          break
     else:
       discard
 
-    let savedScope = vm.currentScope
-    for val in values:
-      # Create new scope for each iteration (important for closures)
-      vm.currentScope = newScope(savedScope)
-      vm.currentScope.define(node.forVar, val)
-      discard vm.evalExpr(node.forBody)
-      if vm.controlFlow == BreakFlow:
-        vm.controlFlow = NoneFlow
-        break
-      if vm.controlFlow == ContinueFlow:
-        vm.controlFlow = NoneFlow
-      if vm.controlFlow == ReturnFlow:
-        break
     vm.currentScope = savedScope
     return nilValue()
 
@@ -559,6 +637,7 @@ proc evalExpr(vm: VM, node: Node): Value =
     let savedScope = vm.currentScope
     vm.currentScope = newScope(savedScope)
     while true:
+      vm.chargeStep()
       let cond = vm.evalExpr(node.whileCond)
       if not isTruthy(cond):
         break
@@ -583,7 +662,7 @@ proc evalExpr(vm: VM, node: Node): Value =
 
   of ProcDefNode:
     let procVal = procValue(node.procName, node.procParams, node.procBody, vm.currentScope)
-    vm.currentScope.define(node.procName, procVal)
+    vm.defineChecked(node.procName, procVal)
     return nilValue()
 
   of TypeDefNode:
@@ -592,7 +671,7 @@ proc evalExpr(vm: VM, node: Node): Value =
       for field in node.typeBody.objectFields:
         fields.add(field.fieldName)
     let typeVal = typeValue(node.typeName, fields)
-    vm.currentScope.define(node.typeName, typeVal)
+    vm.defineChecked(node.typeName, typeVal)
     return nilValue()
 
   else:
@@ -602,50 +681,56 @@ proc evalExpr(vm: VM, node: Node): Value =
 # Statement Execution (used by step)
 # =============================================================================
 
-proc execAssign(vm: VM, node: Node) =
-  let value = vm.evalExpr(node.assignValue)
-
-  if node.assignTarget.kind == IdentNode:
-    let name = node.assignTarget.name
+proc assignToTarget(vm: VM, target: Node, value: Value) =
+  ## Assign an already-evaluated value to an assignment target with full
+  ## bounds and type checking. Every write path routes through here so none
+  ## can bypass the checks (prevents out-of-bounds and type-confused writes,
+  ## which are memory-unsafe under -d:danger and abort the host otherwise).
+  case target.kind
+  of IdentNode:
+    let name = target.name
+    if vm.currentScope.isSealed(name):
+      vm.error(fmt"Cannot assign to sealed global '{name}'", target.line, target.col)
     if vm.currentScope.isConstant(name):
-      vm.error(fmt"Cannot assign to constant '{name}'", node.line, node.col)
+      vm.error(fmt"Cannot assign to constant '{name}'", target.line, target.col)
     if not vm.currentScope.assign(name, value):
-      vm.error(fmt"Undefined variable '{name}'", node.line, node.col)
-    return
+      vm.error(fmt"Undefined variable '{name}'", target.line, target.col)
 
-  if node.assignTarget.kind == IndexNode:
-    let obj = vm.evalExpr(node.assignTarget.indexee)
-    let index = vm.evalExpr(node.assignTarget.index)
+  of IndexNode:
+    let obj = vm.evalExpr(target.indexee)
+    let index = vm.evalExpr(target.index)
 
     if obj.kind == ArrayValue:
       if index.kind != IntValue:
-        vm.error("Array index must be an integer", node.line, node.col)
+        vm.error("Array index must be an integer", target.line, target.col)
       let i = index.intVal
       if i < 0 or i >= obj.arrayVal.len:
-        vm.error(fmt"Array index {i} out of bounds", node.line, node.col)
+        vm.error(fmt"Array index {i} out of bounds", target.line, target.col)
       obj.arrayVal[i] = value
-      return
-
-    if obj.kind == TableValue:
+    elif obj.kind == TableValue:
       if index.kind != StringValue:
-        vm.error("Table key must be a string", node.line, node.col)
+        vm.error("Table key must be a string", target.line, target.col)
       obj.tableVal[index.strVal] = value
-      return
+    else:
+      vm.error(fmt"Cannot index assign {typeName(obj)}", target.line, target.col)
 
-    vm.error(fmt"Cannot index assign {typeName(obj)}", node.line, node.col)
-
-  if node.assignTarget.kind == DotNode:
-    let obj = vm.evalExpr(node.assignTarget.dotLeft)
+  of DotNode:
+    let obj = vm.evalExpr(target.dotLeft)
     if obj.kind == ObjectValue:
-      obj.objFields[node.assignTarget.dotField] = value
-      return
-    vm.error(fmt"Cannot assign field of {typeName(obj)}", node.line, node.col)
+      obj.objFields[target.dotField] = value
+    else:
+      vm.error(fmt"Cannot assign field of {typeName(obj)}", target.line, target.col)
 
-  vm.error("Invalid assignment target", node.line, node.col)
+  else:
+    vm.error("Invalid assignment target", target.line, target.col)
+
+proc execAssign(vm: VM, node: Node) =
+  let value = vm.evalExpr(node.assignValue)
+  vm.assignToTarget(node.assignTarget, value)
 
 proc execProcDef(vm: VM, node: Node) =
   let procVal = procValue(node.procName, node.procParams, node.procBody, vm.currentScope)
-  vm.currentScope.define(node.procName, procVal)
+  vm.defineChecked(node.procName, procVal)
 
 proc execTypeDef(vm: VM, node: Node) =
   var fields: seq[string] = @[]
@@ -653,7 +738,7 @@ proc execTypeDef(vm: VM, node: Node) =
     for field in node.typeBody.objectFields:
       fields.add(field.fieldName)
   let typeVal = typeValue(node.typeName, fields)
-  vm.currentScope.define(node.typeName, typeVal)
+  vm.defineChecked(node.typeName, typeVal)
 
 # =============================================================================
 # Stepping API
@@ -680,6 +765,32 @@ proc currentFrame(vm: VM): ExecutionFrame =
     return vm.frames[^1]
   return nil
 
+proc forCurrentValue(frame: ExecutionFrame): Value =
+  ## The value the loop variable takes at the current position, produced on
+  ## demand so ranges never materialize into a seq.
+  case frame.forIterKind
+  of ForArrayIter: frame.forArray[frame.forIndex]
+  of ForStringIter: stringValue($frame.forString[frame.forIndex])
+  of ForRangeIter: intValue(frame.forRangeCur)
+
+proc forAdvance(frame: ExecutionFrame): bool =
+  ## Advance to the next position; returns false when the iterable is
+  ## exhausted. For ranges this never steps past the end, so it cannot
+  ## overflow int64.
+  case frame.forIterKind
+  of ForArrayIter:
+    frame.forIndex += 1
+    frame.forIndex < frame.forArray.len
+  of ForStringIter:
+    frame.forIndex += 1
+    frame.forIndex < frame.forString.len
+  of ForRangeIter:
+    if frame.forRangeCur >= frame.forRangeEnd:
+      false
+    else:
+      frame.forRangeCur += 1
+      true
+
 proc advanceFrame(vm: VM)
 
 proc updateLine(vm: VM) =
@@ -704,8 +815,7 @@ proc advanceFrame(vm: VM) =
 
   case frame.kind
   of ForLoopFrame:
-    frame.forIndex += 1
-    if frame.forIndex >= frame.forValues.len:
+    if not frame.forAdvance():
       vm.popFrame()
       if vm.frames.len == 0:
         vm.isFinished = true
@@ -717,7 +827,7 @@ proc advanceFrame(vm: VM) =
       frame.stmtIndex = 0
       let parentScope = frame.scope.parent
       let iterScope = newScope(parentScope)
-      iterScope.define(frame.forNode.forVar, frame.forValues[frame.forIndex])
+      iterScope.define(frame.forNode.forVar, frame.forCurrentValue())
       frame.scope = iterScope
       vm.currentScope = iterScope
       vm.updateLine()
@@ -746,7 +856,7 @@ proc advanceFrame(vm: VM) =
 
     # Assign return value if we have a target
     if varName != "":
-      vm.currentScope.define(varName, returnVal, isConst = varIsConst)
+      vm.defineChecked(varName, returnVal, isConst = varIsConst)
     elif assignTarget != nil:
       # Handle assignment target (for cases like x = foo())
       if assignTarget.kind == IdentNode:
@@ -773,6 +883,8 @@ proc load*(vm: VM, ast: Node) =
   vm.controlFlow = NoneFlow
   vm.returnValue = nil
   vm.currentScope = vm.globalScope
+  resetInstructions(vm.maxSteps)
+  resetAllocations(vm.maxAllocations)
 
   var stmts: seq[Node] = @[]
   if ast.kind == ProgramNode:
@@ -795,6 +907,8 @@ proc step*(vm: VM) =
   if vm.isFinished or vm.frames.len == 0:
     vm.isFinished = true
     return
+
+  vm.chargeStep()
 
   let frame = vm.currentFrame
 
@@ -846,11 +960,11 @@ proc step*(vm: VM) =
         return
       else:
         # Native function call - use result directly
-        vm.currentScope.define(varName, callResult, isConst = isConst)
+        vm.defineChecked(varName, callResult, isConst = isConst)
     else:
       # Normal expression
       let value = vm.evalExpr(valueNode)
-      vm.currentScope.define(varName, value, isConst = isConst)
+      vm.defineChecked(varName, value, isConst = isConst)
 
     frame.stmtIndex += 1
     vm.updateLine()
@@ -891,20 +1005,7 @@ proc step*(vm: VM) =
         return
       else:
         # Native function - use callResult directly
-        let target = stmt.assignTarget
-        if target.kind == IdentNode:
-          discard vm.currentScope.assign(target.name, callResult)
-        elif target.kind == IndexNode:
-          let obj = vm.evalExpr(target.indexee)
-          let index = vm.evalExpr(target.index)
-          if obj.kind == ArrayValue:
-            obj.arrayVal[index.intVal] = callResult
-          elif obj.kind == TableValue:
-            obj.tableVal[index.strVal] = callResult
-        elif target.kind == DotNode:
-          let obj = vm.evalExpr(target.dotLeft)
-          if obj.kind == ObjectValue:
-            obj.objFields[target.dotField] = callResult
+        vm.assignToTarget(stmt.assignTarget, callResult)
     else:
       vm.execAssign(stmt)
 
@@ -970,41 +1071,45 @@ proc step*(vm: VM) =
     let iter = vm.evalExpr(stmt.forIter)
     frame.stmtIndex += 1
 
-    var values: seq[Value] = @[]
+    var bodyStmts: seq[Node] = @[]
+    if stmt.forBody.kind == BlockNode:
+      bodyStmts = stmt.forBody.stmts
+    else:
+      bodyStmts = @[stmt.forBody]
+
+    # Build a lazy loop frame. Ranges are not materialized, so `for i in
+    # 0 .. 100_000_000` costs O(1) memory here; each iteration then charges the
+    # step budget, keeping the loop bounded.
+    var loopFrame: ExecutionFrame = nil
     case iter.kind
     of RangeValue:
       let s = iter.rangeStart
       let e = if iter.rangeInclusive: iter.rangeEnd else: iter.rangeEnd - 1
-      for i in s..e:
-        values.add(intValue(i))
+      if s <= e:
+        loopFrame = ExecutionFrame(
+          kind: ForLoopFrame, stmts: bodyStmts, stmtIndex: 0,
+          forNode: stmt, forIterKind: ForRangeIter,
+          forRangeCur: s, forRangeEnd: e)
     of ArrayValue:
-      values = iter.arrayVal
+      if iter.arrayVal.len > 0:
+        loopFrame = ExecutionFrame(
+          kind: ForLoopFrame, stmts: bodyStmts, stmtIndex: 0,
+          forNode: stmt, forIterKind: ForArrayIter,
+          forArray: iter.arrayVal, forIndex: 0)
     of StringValue:
-      for c in iter.strVal:
-        values.add(stringValue($c))
+      if iter.strVal.len > 0:
+        loopFrame = ExecutionFrame(
+          kind: ForLoopFrame, stmts: bodyStmts, stmtIndex: 0,
+          forNode: stmt, forIterKind: ForStringIter,
+          forString: iter.strVal, forIndex: 0)
     else:
       vm.error("Cannot iterate over " & typeName(iter), stmt.line, stmt.col)
 
-    if values.len > 0:
-      var bodyStmts: seq[Node] = @[]
-      if stmt.forBody.kind == BlockNode:
-        bodyStmts = stmt.forBody.stmts
-      else:
-        bodyStmts = @[stmt.forBody]
-
+    if loopFrame != nil:
       let newScope = newScope(vm.currentScope)
       vm.currentScope = newScope
-      newScope.define(stmt.forVar, values[0])
-
-      let loopFrame = ExecutionFrame(
-        kind: ForLoopFrame,
-        stmts: bodyStmts,
-        stmtIndex: 0,
-        scope: newScope,
-        forNode: stmt,
-        forValues: values,
-        forIndex: 0
-      )
+      loopFrame.scope = newScope
+      newScope.define(stmt.forVar, loopFrame.forCurrentValue())
       vm.frames.add(loopFrame)
 
     vm.updateLine()
@@ -1055,7 +1160,7 @@ proc step*(vm: VM) =
 
         # Assign return value if we have a target
         if varName != "":
-          vm.currentScope.define(varName, returnVal, isConst = varIsConst)
+          vm.defineChecked(varName, returnVal, isConst = varIsConst)
         elif assignTarget != nil:
           if assignTarget.kind == IdentNode:
             discard vm.currentScope.assign(assignTarget.name, returnVal)
@@ -1264,6 +1369,8 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
 
   # Use current scope for evaluation (so we can inspect local variables)
   let evalScope = if vm.currentScope != nil: vm.currentScope else: vm.globalScope
+  resetInstructions(vm.maxSteps)
+  resetAllocations(vm.maxAllocations)
 
   # Try to evaluate
   try:
@@ -1276,11 +1383,12 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
           # Variable declaration in interactive mode
           let varName = stmt.varName
           let varValue = if stmt.varValue.isNil: nilValue() else: vm.evalExpr(stmt.varValue)
-          evalScope.define(varName, varValue)
+          vm.defineChecked(varName, varValue)
         of AssignNode:
-          # Assignment
+          # Assignment (dispatch on target kind; never assume a bare name)
           let val = vm.evalExpr(stmt.assignValue)
-          discard evalScope.assign(stmt.assignTarget.name, val)
+          vm.assignToTarget(stmt.assignTarget, val)
+          result.value = val
         of CallNode:
           # Function call as statement
           let val = vm.evalExpr(stmt)
@@ -1316,8 +1424,12 @@ proc runInteractive*(vm: VM, code: string): InteractiveResult =
 # Utility Functions
 # =============================================================================
 
-proc addProc*(vm: VM, name: string, p: NativeProc) =
-  vm.globalScope.define(name, nativeProcValue(name, p))
+proc addProc*(vm: VM, name: string, p: NativeProc, sealed = false) =
+  ## Register a native proc. Pass sealed = true to protect a host capability so
+  ## scripts can shadow it locally but never replace the global binding, letting
+  ## the host trust the name stays the real proc. Convenience builtins are left
+  ## unsealed so scripts can still use those names (e.g. `let str = ...`).
+  vm.globalScope.define(name, nativeProcValue(name, p), sealed = sealed)
 
 proc getOutput*(vm: VM): string =
   vm.output.join("\n")

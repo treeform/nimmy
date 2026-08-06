@@ -112,6 +112,7 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "add() takes exactly 2 arguments")
     if args[0].kind != ArrayValue:
       raise newException(RuntimeError, "First argument to add() must be an array")
+    chargeAllocation(8)  # account for the appended element
     args[0].arrayVal.add(args[1])
     return args[0]
   
@@ -213,6 +214,7 @@ proc newNimmyVM*(): NimmyVM =
     for existing in args[0].setVal:
       if equals(existing, args[1]):
         return args[0]
+    chargeAllocation(8)  # account for the added set element
     args[0].setVal.add(args[1])
     args[0]
   
@@ -404,13 +406,26 @@ proc runFile*(nvm: NimmyVM, path: string): string =
   let source = readFile(path)
   result = nvm.run(source)
 
-# Add a custom procedure
-proc addProc*(nvm: NimmyVM, name: string, p: NativeProc) =
-  nvm.vm.addProc(name, p)
+# Add a custom procedure. Pass sealed = true to protect a host capability so a
+# script can shadow it locally but never replace the global binding.
+proc addProc*(nvm: NimmyVM, name: string, p: NativeProc, sealed = false) =
+  nvm.vm.addProc(name, p, sealed = sealed)
 
-# Set a global variable
-proc setGlobal*(nvm: NimmyVM, name: string, value: Value) =
-  nvm.vm.globalScope.define(name, value)
+# Set a global variable. Pass sealed = true to protect a host API so a script
+# cannot redefine or reassign it (see sealGlobal to seal one after the fact).
+proc setGlobal*(nvm: NimmyVM, name: string, value: Value, sealed = false) =
+  nvm.vm.globalScope.define(name, value, sealed = sealed)
+
+# Seal an existing global so scripts can no longer redefine or reassign it.
+proc sealGlobal*(nvm: NimmyVM, name: string) =
+  nvm.vm.globalScope.sealed[name] = true
+
+# Seal every currently-defined global (builtins and host APIs). Call after
+# registering host APIs for strict integrity: scripts can then shadow names
+# locally but cannot redefine or reassign any global.
+proc sealAllGlobals*(nvm: NimmyVM) =
+  for name in nvm.vm.globalScope.vars.keys:
+    nvm.vm.globalScope.sealed[name] = true
 
 # Get a global variable
 proc getGlobal*(nvm: NimmyVM, name: string): Value =

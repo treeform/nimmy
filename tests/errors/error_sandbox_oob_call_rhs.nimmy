@@ -1,0 +1,4 @@
+# Sandbox: out-of-bounds array write via a call-valued RHS.
+# This path bypassed bounds checks and corrupted memory under -d:danger.
+var a = [1, 2, 3]
+a[100000] = len("x")

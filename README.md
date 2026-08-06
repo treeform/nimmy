@@ -18,7 +18,10 @@ The entire implementation is just a couple of files, making it easy to integrate
 
 ## Features
 
-- **Sandboxed execution** — Safe to run untrusted scripts
+- **Sandboxed execution** — No file, process, or network access, and every
+  element access is bounds- and type-checked so a script cannot corrupt the
+  host's memory. See [Security model](#security-model) for how to run untrusted
+  scripts safely.
 - **Deterministic** — Tables and object fields keep insertion order, so iteration is reproducible across runs and platforms
 
 ## Fully deterministic builds
@@ -96,6 +99,92 @@ nvm.addProc("add") do (args: seq[Value]) -> Value:
 discard nvm.run("echo add(1, 2)")
 # Output: 3
 ```
+
+## Security model
+
+Nimmy is meant to run untrusted scripts. The language exposes no way to touch
+the filesystem, spawn processes, or reach the network — the only capabilities a
+script has are the builtins and custom procs the host registers. Beyond that,
+the interpreter is written to fail safe:
+
+- **Memory safety.** Every array/table read and write is bounds- and
+  type-checked. An out-of-bounds index, a negative index, or a wrong-typed key
+  raises a catchable `RuntimeError` — it can never read or write past a buffer.
+  Rendering a value (`$` / `echo`) detects cycles and caps nesting depth, so a
+  self-referential structure prints a `...` marker instead of overflowing the
+  host stack.
+- **Catchable failures.** Script errors are `RuntimeError` (a
+  `CatchableError`), so a host can wrap `nvm.run(...)` in `try/except
+  CatchableError` and keep running. A single bad script cannot take down the
+  host process.
+- **Bounded execution.** An instruction budget (`vm.maxSteps`) stops infinite
+  loops. Native builtins, `echo`, element comparisons, and value rendering all
+  charge against it, so a single statement cannot do unbounded work (e.g. a
+  `contains` scan in a tight loop).
+- **Bounded recursion.** Native recursion is capped by `vm.maxCallDepth` so a
+  runaway recursive script raises an error instead of overflowing the host's C
+  stack. The parser is likewise depth-limited, so deeply nested input like
+  `((((…))))` raises a catchable `ParseError` instead of crashing during
+  parsing (and the bounded AST can't overflow the evaluator either).
+- **Bounded memory.** Script allocations are metered against `vm.maxAllocations`
+  so a script cannot exhaust host memory.
+- **Sealed globals.** A script can't replace a global the host marks sealed —
+  `echo` is sealed by default, and a host seals its own capabilities so it can
+  trust `getGlobal` still returns the real proc. A script may still shadow a
+  sealed name with a local or parameter.
+
+**These limits are on by default**, so a freshly constructed VM is hostile-safe
+without any host configuration — an infinite loop, runaway recursion, or memory
+bomb aborts with a catchable `RuntimeError`:
+
+```nim
+let nvm = newNimmyVM()          # already limited (see DefaultMax* in vm.nim)
+try:
+  discard nvm.run(untrustedSource)
+except CatchableError as e:
+  echo "script rejected: ", e.msg
+```
+
+The defaults are generous safety nets that ordinary scripts never reach:
+`maxSteps = 10_000_000`, `maxCallDepth = 256`, `maxAllocations = 256_000_000`
+(≈256 MB). A host can tune any of them — raise them for heavy trusted scripts,
+tighten them for a multi-tenant service, or set one to `0` to disable it:
+
+```nim
+nvm.vm.maxSteps = 1_000_000     # tighter statement budget
+nvm.vm.maxAllocations = 0       # disable the allocation limit (trusted use)
+```
+
+`maxAllocations` is a deterministic budget on the heap-backed data a script
+creates (string and collection payloads, in approximate bytes). It complements
+`maxSteps`: a statement count alone cannot stop super-linear growth such as
+`s = s & s` in a loop, which doubles memory each statement — the allocation
+budget stops it. The count is deterministic across platforms, so it does not
+break lockstep builds.
+
+### Sealing host capabilities
+
+Register the APIs you expose to scripts as **sealed** so a script cannot swap
+them out from under you — useful when the host later looks a global back up by
+name and assumes it is still the real proc:
+
+```nim
+nvm.addProc("sendTo", sendToImpl, sealed = true)  # script can't redefine sendTo
+nvm.setGlobal("world", worldValue, sealed = true) # ...or reassign world
+# nvm.sealGlobal("existing")   # seal a name defined earlier
+# nvm.sealAllGlobals()         # strict: seal every builtin and host API
+```
+
+`echo` is sealed out of the box; the convenience builtins (`len`, `str`, `add`,
+…) are left unsealed so scripts can use those common names as their own
+variables. A sealed name can still be shadowed by a local or parameter — that
+binding is private to the script and never touches the host's global.
+
+> **Do not compile the host with `-d:danger` when running untrusted scripts.**
+> `-d:danger` removes the runtime range/field checks the sandbox relies on.
+> Use the default or `-d:release` build. For strong isolation, also run the
+> host in an OS sandbox (separate process, seccomp/jail, resource limits) as
+> defense in depth.
 
 ## Debugger and inspection support
 

@@ -1,0 +1,6 @@
+# Sandbox: string-index type confusion from an expression-context call.
+var a = [1, 2, 3]
+proc f() =
+  a["x"] = 7
+  return 0
+echo f()

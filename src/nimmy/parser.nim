@@ -4,18 +4,31 @@
 import types, lexer
 import std/[strformat, strutils]
 
+const MaxParseDepth* = 100
+  ## Cap on recursive-descent nesting (parenthesized expressions and indented
+  ## blocks). Keeps a pathological input like `((((…))))` from overflowing the
+  ## host C stack during parsing; it raises a catchable ParseError instead. It
+  ## also bounds the resulting AST depth, so evaluating it cannot overflow the
+  ## stack either. Kept well under Nim's debug call-depth limit (2000 calls, at
+  ## ~12 parser frames per nesting level) so the catchable guard fires first in
+  ## every build. Embedders can pass a larger value to `parse` in release
+  ## builds; deeper nesting than this never occurs in real code.
+
 type
   Parser* = ref object
     lexer: Lexer
     current: Token
     upcoming: Token
     previous: Token
+    depth: int              ## Current recursive-descent nesting depth
+    maxDepth: int           ## Cap on nesting depth
 
-proc newParser*(source: string): Parser =
+proc newParser*(source: string, maxDepth = MaxParseDepth): Parser =
   let lexer = newLexer(source)
   let current = lexer.nextToken()
   let upcoming = lexer.nextToken()
-  Parser(lexer: lexer, current: current, upcoming: upcoming)
+  Parser(lexer: lexer, current: current, upcoming: upcoming,
+         depth: 0, maxDepth: maxDepth)
 
 proc error(P: Parser, msg: string) =
   var e = newException(ParseError, fmt"{msg} at line {P.current.line}, column {P.current.col}")
@@ -418,25 +431,40 @@ proc commandExpr(P: Parser): Node =
     )
 
 proc expression(P: Parser): Node =
-  P.commandExpr()
+  # Bound recursion so deeply nested expressions raise a catchable ParseError
+  # instead of overflowing the host C stack.
+  inc P.depth
+  if P.depth > P.maxDepth:
+    P.error("Expression nesting too deep")
+  try:
+    result = P.commandExpr()
+  finally:
+    dec P.depth
 
 # Parse a block of statements (after indent)
 proc parseBlock(P: Parser): Node =
   let line = P.current.line
   let col = P.current.col
   var stmts: seq[Node] = @[]
-  
-  P.skipNewlines()
-  discard P.consume(IndentToken, "Expected indented block")
-  P.skipNewlines()
-  
-  while not P.check(DedentToken) and not P.check(EofToken):
-    stmts.add(P.statement())
+
+  # Bound block nesting the same way as expressions.
+  inc P.depth
+  if P.depth > P.maxDepth:
+    P.error("Block nesting too deep")
+  try:
     P.skipNewlines()
-  
-  if P.check(DedentToken):
-    discard P.advance()
-  
+    discard P.consume(IndentToken, "Expected indented block")
+    P.skipNewlines()
+
+    while not P.check(DedentToken) and not P.check(EofToken):
+      stmts.add(P.statement())
+      P.skipNewlines()
+
+    if P.check(DedentToken):
+      discard P.advance()
+  finally:
+    dec P.depth
+
   Node(kind: BlockNode, line: line, col: col, stmts: stmts)
 
 # Let statement
@@ -627,8 +655,8 @@ proc statement(P: Parser): Node =
   
   return P.expressionStatement()
 
-proc parse*(source: string): Node =
-  let P = newParser(source)
+proc parse*(source: string, maxDepth = MaxParseDepth): Node =
+  let P = newParser(source, maxDepth)
   let line = P.current.line
   let col = P.current.col
   var stmts: seq[Node] = @[]

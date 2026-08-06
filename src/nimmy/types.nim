@@ -261,6 +261,7 @@ type
     parent*: Scope
     vars*: OrderedTableRef[string, Value]
     isConst*: OrderedTableRef[string, bool]
+    sealed*: OrderedTableRef[string, bool]  ## Names a script may not redefine or assign
 
   # Error types
   NimmyError* = object of CatchableError
@@ -277,6 +278,64 @@ type
     stepMode*: bool
     currentLine*: int
 
+# Allocation accounting
+#
+# A deterministic budget on the heap-backed data a script creates. It bounds
+# memory the way maxSteps bounds execution, and catches super-linear growth
+# (e.g. `s = s & s` in a loop) that a statement count cannot. Counting happens
+# in the value constructors below, so no allocation site can be missed. Units
+# are approximate bytes and are deterministic across platforms (unlike
+# getOccupiedMem), preserving Nimmy's lockstep guarantee.
+var
+  allocatedUnits* {.threadvar.}: int   ## Cumulative units charged this run.
+  allocationLimit* {.threadvar.}: int  ## Cap in units, 0 means unlimited.
+
+proc chargeAllocation*(units: int) =
+  ## Account for `units` of allocation and enforce the limit. Raises a
+  ## catchable RuntimeError when the budget is exhausted.
+  if units <= 0:
+    return
+  allocatedUnits += units
+  if allocationLimit > 0 and allocatedUnits > allocationLimit:
+    raise newException(RuntimeError, "Maximum allocation exceeded")
+
+proc allocationsUsed*(): int =
+  ## Units charged since the current run began.
+  allocatedUnits
+
+proc resetAllocations*(limit: int) =
+  ## Begin a fresh allocation budget for a run.
+  allocatedUnits = 0
+  allocationLimit = limit
+
+# Instruction accounting
+#
+# The statement/step budget, exposed thread-locally so that work done outside
+# the statement stepper — native builtins and value rendering ($ / echo) — can
+# charge against it too. A statement that calls a builtin doing O(n) work, or
+# renders a large structure, is bounded instead of running unaccounted.
+var
+  instructionCount* {.threadvar.}: int  ## Cumulative instructions this run.
+  instructionLimit* {.threadvar.}: int  ## Cap, 0 means unlimited.
+
+proc chargeInstructions*(n: int) =
+  ## Account for `n` instructions and enforce the limit. Raises a catchable
+  ## RuntimeError when the budget is exhausted.
+  if n <= 0:
+    return
+  instructionCount += n
+  if instructionLimit > 0 and instructionCount > instructionLimit:
+    raise newException(RuntimeError, "Maximum step count exceeded")
+
+proc instructionsUsed*(): int =
+  ## Instructions charged since the current run began.
+  instructionCount
+
+proc resetInstructions*(limit: int) =
+  ## Begin a fresh instruction budget for a run.
+  instructionCount = 0
+  instructionLimit = limit
+
 # Value constructors
 proc nilValue*(): Value =
   Value(kind: NilValue)
@@ -291,21 +350,26 @@ proc floatValue*(f: float64): Value =
   Value(kind: FloatValue, floatVal: f)
 
 proc stringValue*(s: string): Value =
+  chargeAllocation(s.len + 1)
   Value(kind: StringValue, strVal: s)
 
 proc argsValue*(args: seq[Value]): Value =
   Value(kind: ArgsValue, argsVal: args)
 
 proc arrayValue*(arr: seq[Value]): Value =
+  chargeAllocation(arr.len * 8 + 8)
   Value(kind: ArrayValue, arrayVal: arr)
 
 proc tableValue*(): Value =
+  chargeAllocation(8)
   Value(kind: TableValue, tableVal: newOrderedTable[string, Value]())
 
 proc setValue*(elems: seq[Value]): Value =
+  chargeAllocation(elems.len * 8 + 8)
   Value(kind: SetValue, setVal: elems)
 
 proc objectValue*(typeName: string): Value =
+  chargeAllocation(8)
   Value(kind: ObjectValue, objType: typeName, objFields: newOrderedTable[string, Value]())
 
 proc procValue*(name: string, params: seq[string], body: Node, closure: Scope): Value =
@@ -322,11 +386,30 @@ proc rangeValue*(start, stop: int64, inclusive: bool): Value =
 
 # Scope operations
 proc newScope*(parent: Scope = nil): Scope =
-  Scope(parent: parent, vars: newOrderedTable[string, Value](), isConst: newOrderedTable[string, bool]())
+  Scope(parent: parent, vars: newOrderedTable[string, Value](),
+        isConst: newOrderedTable[string, bool](),
+        sealed: newOrderedTable[string, bool]())
 
-proc define*(scope: Scope, name: string, value: Value, isConst: bool = false) =
+proc define*(scope: Scope, name: string, value: Value,
+             isConst: bool = false, sealed: bool = false) =
   scope.vars[name] = value
   scope.isConst[name] = isConst
+  if sealed:
+    scope.sealed[name] = true
+
+proc isSealedHere*(scope: Scope, name: string): bool =
+  ## Whether `name` is sealed in this exact scope (not a parent).
+  scope.sealed.getOrDefault(name, false)
+
+proc isSealed*(scope: Scope, name: string): bool =
+  ## Whether the binding `name` resolves to is sealed. A shadowing binding in an
+  ## inner scope is not sealed, so scripts can still use the name locally.
+  var current = scope
+  while current != nil:
+    if current.vars.hasKey(name):
+      return current.sealed.getOrDefault(name, false)
+    current = current.parent
+  false
 
 proc lookup*(scope: Scope, name: string): Value =
   var current = scope
