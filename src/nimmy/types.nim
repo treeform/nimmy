@@ -233,12 +233,12 @@ type
     of ArrayValue:
       arrayVal*: seq[Value]
     of TableValue:
-      tableVal*: TableRef[string, Value]
+      tableVal*: OrderedTableRef[string, Value]
     of SetValue:
       setVal*: seq[Value]
     of ObjectValue:
       objType*: string
-      objFields*: TableRef[string, Value]
+      objFields*: OrderedTableRef[string, Value]
     of ProcValue:
       procName*: string
       procParams*: seq[string]
@@ -258,8 +258,8 @@ type
   # Scope for variable lookup
   Scope* = ref object
     parent*: Scope
-    vars*: TableRef[string, Value]
-    isConst*: TableRef[string, bool]
+    vars*: OrderedTableRef[string, Value]
+    isConst*: OrderedTableRef[string, bool]
 
   # Error types
   NimmyError* = object of CatchableError
@@ -299,13 +299,13 @@ proc arrayValue*(arr: seq[Value]): Value =
   Value(kind: ArrayValue, arrayVal: arr)
 
 proc tableValue*(): Value =
-  Value(kind: TableValue, tableVal: newTable[string, Value]())
+  Value(kind: TableValue, tableVal: newOrderedTable[string, Value]())
 
 proc setValue*(elems: seq[Value]): Value =
   Value(kind: SetValue, setVal: elems)
 
 proc objectValue*(typeName: string): Value =
-  Value(kind: ObjectValue, objType: typeName, objFields: newTable[string, Value]())
+  Value(kind: ObjectValue, objType: typeName, objFields: newOrderedTable[string, Value]())
 
 proc procValue*(name: string, params: seq[string], body: Node, closure: Scope): Value =
   Value(kind: ProcValue, procName: name, procParams: params, procBody: body, procClosure: closure)
@@ -321,7 +321,7 @@ proc rangeValue*(start, stop: int64, inclusive: bool): Value =
 
 # Scope operations
 proc newScope*(parent: Scope = nil): Scope =
-  Scope(parent: parent, vars: newTable[string, Value](), isConst: newTable[string, bool]())
+  Scope(parent: parent, vars: newOrderedTable[string, Value](), isConst: newOrderedTable[string, bool]())
 
 proc define*(scope: Scope, name: string, value: Value, isConst: bool = false) =
   scope.vars[name] = value
