@@ -32,6 +32,7 @@ const
     "not": NotToken,
     "and": AndToken,
     "or": OrToken,
+    "div": DivToken,
     "type": TypeToken,
     "object": ObjectToken,
     "true": TrueToken,
@@ -136,6 +137,8 @@ proc scanNumber(L: Lexer): Token =
       value.add(L.advance())
   
   if isFloat:
+    when defined(nimmyNoFloats):
+      L.error("Float literals are disabled in this build, use integers")
     result = L.makeToken(FloatToken, value, startLine, startCol)
   else:
     result = L.makeToken(IntToken, value, startLine, startCol)
