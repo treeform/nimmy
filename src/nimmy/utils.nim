@@ -17,10 +17,8 @@ const MaxRenderDepth = 512
 # Every container node charges the instruction budget, so rendering a huge
 # structure is bounded like any other work.
 proc render(v: Value, seen: var HashSet[pointer], quoted: bool, depth: int): string =
-  if v.isNil:
-    return "nil"
   case v.kind
-  of NilValue:
+  of MissingValue, NilValue:
     return "nil"
   of BoolValue:
     return $v.boolVal
@@ -46,7 +44,12 @@ proc render(v: Value, seen: var HashSet[pointer], quoted: bool, depth: int): str
     return parts.join(" ")
   of ArrayValue, TableValue, SetValue, ObjectValue:
     chargeInstructions(1)
-    let identity = cast[pointer](v)
+    let identity =
+      case v.kind
+      of ArrayValue: cast[pointer](v.arrayRef)
+      of SetValue: cast[pointer](v.setRef)
+      of TableValue: cast[pointer](v.tableVal)
+      else: cast[pointer](v.objRef)
     if depth >= MaxRenderDepth or identity in seen:
       return "..."  # cyclic or too deeply nested
     seen.incl(identity)
@@ -85,10 +88,8 @@ proc valueRepr*(v: Value): string =
 
 # Truthiness check
 proc isTruthy*(v: Value): bool =
-  if v.isNil:
-    return false
   case v.kind
-  of NilValue:
+  of MissingValue, NilValue:
     result = false
   of BoolValue:
     result = v.boolVal
@@ -119,10 +120,8 @@ proc equals*(a, b: Value): bool =
   # `in`, set union/intersection/difference, incl/excl, `==` on nested data —
   # are all bounded by the instruction budget instead of running unaccounted.
   chargeInstructions(1)
-  if a.isNil and b.isNil:
-    return true
-  if a.isNil or b.isNil:
-    return false
+  if a.kind == MissingValue or b.kind == MissingValue:
+    return a.kind == b.kind
   if a.kind != b.kind:
     # Allow int/float comparison
     if a.kind == IntValue and b.kind == FloatValue:
@@ -169,8 +168,20 @@ proc equals*(a, b: Value): bool =
         return false
     result = true
   else:
-    # Reference equality for other types
-    result = a == b
+    # Payload identity for the remaining kinds, matching the old
+    # reference equality.
+    case a.kind
+    of ProcValue:
+      result = a.procRef == b.procRef
+    of NativeProcValue:
+      result = a.nativeRef == b.nativeRef
+    of TypeValue:
+      result = a.typeRef == b.typeRef
+    of RangeValue:
+      result = a.rangeStart == b.rangeStart and
+        a.rangeEnd == b.rangeEnd and a.rangeInclusive == b.rangeInclusive
+    else:
+      result = false
 
 # Comparison (for < > <= >=)
 proc compare*(a, b: Value): int =
@@ -209,10 +220,8 @@ proc toInt*(v: Value): int64 =
 
 # Type name for error messages
 proc typeName*(v: Value): string =
-  if v.isNil:
-    return "nil"
   case v.kind
-  of NilValue: "nil"
+  of MissingValue, NilValue: "nil"
   of BoolValue: "bool"
   of IntValue: "int"
   of FloatValue: "float"

@@ -315,7 +315,7 @@ proc runSecurityTests*(): (int, int) =
       discard nvm.run("proc sendTo(x) =\n  return 0\n")
     except CatchableError as e:
       msg = e.msg
-    let stillReal = nvm.getGlobal("sendTo") != nil and
+    let stillReal = not nvm.getGlobal("sendTo").isMissing and
       nvm.getGlobal("sendTo").kind == NativeProcValue
     check("host can seal its API and trust getGlobal",
           "sealed" in msg and stillReal, msg)
@@ -397,7 +397,7 @@ proc runSecurityTests*(): (int, int) =
     let r = nvm.vm.runInteractive("a[0] = 9")
     let after = nvm.vm.runInteractive("a[0]")
     check("REPL index assignment does not crash",
-          r.success and after.value != nil and after.value.kind == IntValue and
+          r.success and not after.value.isMissing and after.value.kind == IntValue and
             after.value.intVal == 9,
           "success=" & $r.success)
 

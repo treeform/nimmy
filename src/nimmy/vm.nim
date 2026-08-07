@@ -95,7 +95,7 @@ proc newVM*(): VM =
     output: @[],
     debugInfo: DebugInfo(),
     controlFlow: NoneFlow,
-    returnValue: nil,
+    returnValue: Value(kind: MissingValue),
     frames: @[],
     currentLine: 0,
     isFinished: true,
@@ -362,11 +362,11 @@ proc evalDot(vm: VM, node: Node): Value =
 
   # Try UFCS: look up as a function and call with obj as first argument
   let funcVal = vm.currentScope.lookup(node.dotField)
-  if funcVal != nil:
+  if not funcVal.isMissing:
     if funcVal.kind == NativeProcValue:
       # Call native proc with obj as argument (UFCS without parens)
       chargeInstructions(1)
-      return funcVal.nativeProc(@[obj])
+      return (funcVal.nativeProc)(@[obj])
     elif funcVal.kind == ProcValue:
       # Call user-defined proc with obj as argument (UFCS without parens)
       if funcVal.procParams.len != 1:
@@ -386,7 +386,7 @@ proc evalDot(vm: VM, node: Node): Value =
       if vm.controlFlow == ReturnFlow:
         funcResult = vm.returnValue
         vm.controlFlow = NoneFlow
-        vm.returnValue = nil
+        vm.returnValue = Value(kind: MissingValue)
       return funcResult
 
   if obj.kind == ObjectValue:
@@ -400,7 +400,7 @@ proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value]) =
   ## If needsFrame is true, the caller should push a frame for the function.
   var callee: Value
   var args: seq[Value] = @[]
-  var ufcsReceiver: Value = nil
+  var ufcsReceiver = Value(kind: MissingValue)
 
   # Handle UFCS: obj.method(args) or obj.method
   if node.callee.kind == DotNode:
@@ -411,31 +411,31 @@ proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value]) =
       callee = obj.objFields[methodName]
     else:
       callee = vm.currentScope.lookup(methodName)
-      if callee.isNil:
+      if callee.isMissing:
         vm.error("Unknown function: " & methodName, node.line, node.col)
       ufcsReceiver = obj
   elif node.callee.kind == IdentNode:
     callee = vm.currentScope.lookup(node.callee.name)
-    if callee.isNil:
+    if callee.isMissing:
       vm.error("Unknown function: " & node.callee.name, node.line, node.col)
   else:
     callee = vm.evalExpr(node.callee)
 
-  if ufcsReceiver != nil:
+  if not ufcsReceiver.isMissing:
     args.add(ufcsReceiver)
   for arg in node.args:
     args.add(vm.evalExpr(arg))
 
   if callee.kind == NativeProcValue:
     chargeInstructions(1)
-    return (callee.nativeProc(args), false, nil, @[])
+    return ((callee.nativeProc)(args), false, Value(kind: MissingValue), @[])
 
   if callee.kind == TypeValue:
     let obj = objectValue(callee.typeNameVal)
     for i, arg in node.args:
       if i < callee.typeFields.len:
         obj.objFields[callee.typeFields[i]] = args[i]
-    return (obj, false, nil, @[])
+    return (obj, false, Value(kind: MissingValue), @[])
 
   if callee.kind != ProcValue:
     vm.error("Cannot call " & typeName(callee), node.line, node.col)
@@ -468,7 +468,7 @@ proc evalExpr(vm: VM, node: Node): Value =
     return nilValue()
   of IdentNode:
     result = vm.currentScope.lookup(node.name)
-    if result.isNil:
+    if result.isMissing:
       vm.error(fmt"Undefined variable '{node.name}'", node.line, node.col)
   of BinaryOpNode:
     return vm.evalBinaryOp(node)
@@ -498,7 +498,7 @@ proc evalExpr(vm: VM, node: Node): Value =
       if vm.controlFlow == ReturnFlow:
         funcResult = vm.returnValue
         vm.controlFlow = NoneFlow
-        vm.returnValue = nil
+        vm.returnValue = Value(kind: MissingValue)
       return funcResult
     return callResult
   of IndexNode:
@@ -847,7 +847,7 @@ proc advanceFrame(vm: VM) =
 
   of FunctionFrame:
     # Handle return value assignment if needed
-    let returnVal = if vm.returnValue != nil: vm.returnValue else: nilValue()
+    let returnVal = if not vm.returnValue.isMissing: vm.returnValue else: nilValue()
     let varName = frame.returnVarName
     let varIsConst = frame.returnVarIsConst
     let assignTarget = frame.returnAssignTarget
@@ -862,7 +862,7 @@ proc advanceFrame(vm: VM) =
       if assignTarget.kind == IdentNode:
         discard vm.currentScope.assign(assignTarget.name, returnVal)
 
-    vm.returnValue = nil
+    vm.returnValue = Value(kind: MissingValue)
 
     if vm.frames.len == 0:
       vm.isFinished = true
@@ -881,7 +881,7 @@ proc load*(vm: VM, ast: Node) =
   vm.frames = @[]
   vm.isFinished = false
   vm.controlFlow = NoneFlow
-  vm.returnValue = nil
+  vm.returnValue = Value(kind: MissingValue)
   vm.currentScope = vm.globalScope
   resetInstructions(vm.maxSteps)
   resetAllocations(vm.maxAllocations)
@@ -1151,7 +1151,7 @@ proc step*(vm: VM) =
       let f = vm.currentFrame
       if f.kind == FunctionFrame:
         # Handle return value assignment
-        let returnVal = if vm.returnValue != nil: vm.returnValue else: nilValue()
+        let returnVal = if not vm.returnValue.isMissing: vm.returnValue else: nilValue()
         let varName = f.returnVarName
         let varIsConst = f.returnVarIsConst
         let assignTarget = f.returnAssignTarget
@@ -1165,7 +1165,7 @@ proc step*(vm: VM) =
           if assignTarget.kind == IdentNode:
             discard vm.currentScope.assign(assignTarget.name, returnVal)
 
-        vm.returnValue = nil
+        vm.returnValue = Value(kind: MissingValue)
         break
       else:
         vm.popFrame()

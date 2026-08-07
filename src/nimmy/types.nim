@@ -198,8 +198,12 @@ type
     of EmptyNode:
       discard
 
-  # Runtime value types
+  # Runtime value types. MissingValue is first so a default Value()
+  # means "absent", used by lookups to signal a name that does not
+  # exist. It is never visible to scripts, which only ever see
+  # NilValue and later kinds.
   ValueKind* = enum
+    MissingValue,
     NilValue,
     BoolValue,
     IntValue,
@@ -217,9 +221,33 @@ type
 
   NativeProc* = proc(args: seq[Value]): Value {.closure.}
 
-  Value* = ref object
+  ## Heap payloads. Everything that is not a plain scalar sits behind
+  ## exactly one ref, so copying a Value is a small memcpy plus at
+  ## most one reference count, and copies share the payload, which
+  ## preserves the reference semantics scripts expect.
+  ObjPayload* = object
+    typeName*: string
+    fields*: OrderedTableRef[string, Value]
+
+  ProcPayload* = object
+    name*: string
+    params*: seq[string]
+    body*: Node
+    closure*: Scope
+
+  NativePayload* = object
+    name*: string
+    call*: NativeProc
+
+  TypePayload* = object
+    name*: string
+    fields*: seq[string]
+
+  ## Values are small by-value variant objects, so ints, bools and
+  ## floats never touch the heap at all.
+  Value* = object
     case kind*: ValueKind
-    of NilValue:
+    of MissingValue, NilValue:
       discard
     of BoolValue:
       boolVal*: bool
@@ -228,29 +256,23 @@ type
     of FloatValue:
       floatVal*: float64
     of StringValue:
-      strVal*: string
+      strRef*: ref string
     of ArgsValue:
-      argsVal*: seq[Value]
+      argsRef*: ref seq[Value]
     of ArrayValue:
-      arrayVal*: seq[Value]
+      arrayRef*: ref seq[Value]
     of TableValue:
       tableVal*: OrderedTableRef[string, Value]
     of SetValue:
-      setVal*: seq[Value]
+      setRef*: ref seq[Value]
     of ObjectValue:
-      objType*: string
-      objFields*: OrderedTableRef[string, Value]
+      objRef*: ref ObjPayload
     of ProcValue:
-      procName*: string
-      procParams*: seq[string]
-      procBody*: Node
-      procClosure*: Scope
+      procRef*: ref ProcPayload
     of NativeProcValue:
-      nativeName*: string
-      nativeProc*: NativeProc
+      nativeRef*: ref NativePayload
     of TypeValue:
-      typeNameVal*: string
-      typeFields*: seq[string]
+      typeRef*: ref TypePayload
     of RangeValue:
       rangeStart*: int64
       rangeEnd*: int64
@@ -336,6 +358,29 @@ proc resetInstructions*(limit: int) =
   instructionCount = 0
   instructionLimit = limit
 
+## Accessor templates keep the old field syntax working while the
+## payloads live behind refs. Derefs are lvalues, so mutation through
+## any copy of the Value reaches the shared payload.
+template arrayVal*(v: Value): seq[Value] = v.arrayRef[]
+template setVal*(v: Value): seq[Value] = v.setRef[]
+template strVal*(v: Value): string = v.strRef[]
+template argsVal*(v: Value): seq[Value] = v.argsRef[]
+template objType*(v: Value): string = v.objRef[].typeName
+template objFields*(v: Value): OrderedTableRef[string, Value] =
+  v.objRef[].fields
+template procName*(v: Value): string = v.procRef[].name
+template procParams*(v: Value): seq[string] = v.procRef[].params
+template procBody*(v: Value): Node = v.procRef[].body
+template procClosure*(v: Value): Scope = v.procRef[].closure
+template nativeName*(v: Value): string = v.nativeRef[].name
+template nativeProc*(v: Value): NativeProc = v.nativeRef[].call
+template typeNameVal*(v: Value): string = v.typeRef[].name
+template typeFields*(v: Value): seq[string] = v.typeRef[].fields
+
+proc isMissing*(v: Value): bool {.inline.} =
+  ## True for the internal absent marker, never for script nil.
+  v.kind == MissingValue
+
 # Value constructors
 proc nilValue*(): Value =
   Value(kind: NilValue)
@@ -351,14 +396,20 @@ proc floatValue*(f: float64): Value =
 
 proc stringValue*(s: string): Value =
   chargeAllocation(s.len + 1)
-  Value(kind: StringValue, strVal: s)
+  result = Value(kind: StringValue)
+  new(result.strRef)
+  result.strRef[] = s
 
 proc argsValue*(args: seq[Value]): Value =
-  Value(kind: ArgsValue, argsVal: args)
+  result = Value(kind: ArgsValue)
+  new(result.argsRef)
+  result.argsRef[] = args
 
 proc arrayValue*(arr: seq[Value]): Value =
   chargeAllocation(arr.len * 8 + 8)
-  Value(kind: ArrayValue, arrayVal: arr)
+  result = Value(kind: ArrayValue)
+  new(result.arrayRef)
+  result.arrayRef[] = arr
 
 proc tableValue*(): Value =
   chargeAllocation(8)
@@ -366,20 +417,38 @@ proc tableValue*(): Value =
 
 proc setValue*(elems: seq[Value]): Value =
   chargeAllocation(elems.len * 8 + 8)
-  Value(kind: SetValue, setVal: elems)
+  result = Value(kind: SetValue)
+  new(result.setRef)
+  result.setRef[] = elems
 
 proc objectValue*(typeName: string): Value =
   chargeAllocation(8)
-  Value(kind: ObjectValue, objType: typeName, objFields: newOrderedTable[string, Value]())
+  result = Value(kind: ObjectValue)
+  new(result.objRef)
+  result.objRef[] = ObjPayload(
+    typeName: typeName,
+    fields: newOrderedTable[string, Value]()
+  )
 
 proc procValue*(name: string, params: seq[string], body: Node, closure: Scope): Value =
-  Value(kind: ProcValue, procName: name, procParams: params, procBody: body, procClosure: closure)
+  result = Value(kind: ProcValue)
+  new(result.procRef)
+  result.procRef[] = ProcPayload(
+    name: name,
+    params: params,
+    body: body,
+    closure: closure
+  )
 
 proc nativeProcValue*(name: string, p: NativeProc): Value =
-  Value(kind: NativeProcValue, nativeName: name, nativeProc: p)
+  result = Value(kind: NativeProcValue)
+  new(result.nativeRef)
+  result.nativeRef[] = NativePayload(name: name, call: p)
 
 proc typeValue*(name: string, fields: seq[string]): Value =
-  Value(kind: TypeValue, typeNameVal: name, typeFields: fields)
+  result = Value(kind: TypeValue)
+  new(result.typeRef)
+  result.typeRef[] = TypePayload(name: name, fields: fields)
 
 proc rangeValue*(start, stop: int64, inclusive: bool): Value =
   Value(kind: RangeValue, rangeStart: start, rangeEnd: stop, rangeInclusive: inclusive)
@@ -412,12 +481,14 @@ proc isSealed*(scope: Scope, name: string): bool =
   false
 
 proc lookup*(scope: Scope, name: string): Value =
+  ## Returns the missing marker (check with isMissing) when the name
+  ## does not exist anywhere in the scope chain.
   var current = scope
   while current != nil:
     if current.vars.hasKey(name):
       return current.vars[name]
     current = current.parent
-  return nil
+  return Value(kind: MissingValue)
 
 proc assign*(scope: Scope, name: string, value: Value): bool =
   var current = scope

@@ -108,7 +108,7 @@ proc formatStackTrace*(d: Debugger): string =
 # Inspect a specific variable
 proc inspect*(d: Debugger, name: string): string =
   let value = d.vm.currentScope.lookup(name)
-  if value.isNil:
+  if value.isMissing:
     return fmt"Variable '{name}' not found"
   
   case value.kind

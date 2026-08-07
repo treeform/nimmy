@@ -76,16 +76,16 @@ let y = x + 8
     let ast = parse(code)
     vm.load(ast)
     
-    doAssert vm.currentScope.lookup("x").isNil, "x should not exist before step"
+    doAssert vm.currentScope.lookup("x").isMissing, "x should not exist before step"
     
     vm.step()
     let xVal = vm.currentScope.lookup("x")
-    doAssert not xVal.isNil, "x should exist after step 1"
+    doAssert not xVal.isMissing, "x should exist after step 1"
     doAssert xVal.kind == IntValue and xVal.intVal == 42, "x should be 42"
     
     vm.step()
     let yVal = vm.currentScope.lookup("y")
-    doAssert not yVal.isNil, "y should exist after step 2"
+    doAssert not yVal.isMissing, "y should exist after step 2"
     doAssert yVal.kind == IntValue and yVal.intVal == 50, "y should be 50"
     
     doAssert vm.isFinished
