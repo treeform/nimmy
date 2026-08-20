@@ -2,10 +2,13 @@
 ## A graphical step-by-step debugger using Silky UI.
 
 import
-  std/[os, strformat, strutils, tables, sets, hashes, unicode],
+  std/[os, strformat, strutils, tables, sets, unicode],
   opengl, windy, bumpy, vmath, chroma,
-  silky, silky/widgets,
   ../../src/nimmy/[types, parser, vm, utils]
+# silky re-exports the DSL's `text` and `frame`, which build a widget tree;
+# this debugger draws imperatively, so it wants the widgets ones.
+import silky except text, frame
+import silky/widgets
 
 # Forward declarations for console state (defined later)
 var consoleInput: string
@@ -22,7 +25,7 @@ builder.addDir("data/", "data/")
 builder.addFont("data/IBMPlexSans-Regular.ttf", "H1", 24.0)
 builder.addFont("data/IBMPlexSans-Regular.ttf", "Default", 16.0)
 builder.addFont("data/IBMPlexSans-Regular.ttf", "Code", 14.0)
-builder.write("dist/atlas.png", "dist/atlas.json")
+builder.write("dist/atlas.png")
 
 # =============================================================================
 # Window Setup
@@ -43,7 +46,7 @@ window.onRune = proc(rune: Rune) =
     consoleInput.add($rune)
     consoleHistoryIndex = -1  # Reset history browsing when typing
 
-let sk = newSilky("dist/atlas.png", "dist/atlas.json")
+let sk = newSilky(window, "dist/atlas.png")
 
 proc snapToPixels(rect: Rect): Rect =
   rect(rect.x.int.float32, rect.y.int.float32, rect.w.int.float32, rect.h.int.float32)
@@ -610,6 +613,11 @@ proc formatValue(v: Value, indent: int = 0): string =
     pad & $v.floatVal
   of StringValue:
     pad & "\"" & v.strVal & "\""
+  of ArgsValue:
+    var parts: seq[string] = @[]
+    for arg in v.argsVal:
+      parts.add(formatValue(arg, 0))
+    pad & "args(" & parts.join(", ") & ")"
   of ArrayValue:
     if v.arrayVal.len == 0:
       pad & "[]"
@@ -687,8 +695,8 @@ proc drawSourceCodeContent(frameId: string) =
     # Define clickable area for breakpoint toggle (line number gutter)
     let gutterRect = rect(lineX, lineY, LineNumberWidth, actualLineHeight)
 
-    # Handle breakpoint click - mouseInsideClip accounts for scroll & clipping
-    if mouseInsideClip(gutterRect) and window.buttonPressed[MouseLeft]:
+    # Handle breakpoint click - mouseHover accounts for scroll & clipping
+    if sk.mouseHover(window, gutterRect) and window.buttonPressed[MouseLeft]:
       toggleBreakpoint(lineNum)
 
     # Draw breakpoint line background
@@ -967,7 +975,7 @@ proc drawPanelContent(panel: Panel, contentRect: Rect) =
     discard sk.drawText("Code", displayText, vec2(inputRect.x + 8, inputRect.y + 6), textColor)
     
     # Click to activate input
-    if mouseInsideClip(inputRect) and window.buttonPressed[MouseLeft]:
+    if sk.mouseHover(window, inputRect) and window.buttonPressed[MouseLeft]:
       consoleInputActive = true
   else:
     frame(frameId, contentRect.xy, contentRect.wh):
