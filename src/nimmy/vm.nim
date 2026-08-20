@@ -449,7 +449,7 @@ proc evalCallExpr(vm: VM, node: Node): (Value, bool, Value, seq[Value]) =
   # User-defined function - needs a frame
   return (nilValue(), true, callee, args)
 
-proc evalExpr(vm: VM, node: Node): Value =
+proc evalExprInner(vm: VM, node: Node): Value =
   ## Evaluate an expression (within a single step).
   ## Does NOT handle statements that create new frames.
   if node.isNil:
@@ -676,6 +676,24 @@ proc evalExpr(vm: VM, node: Node): Value =
 
   else:
     return nilValue()
+
+proc evalExpr(vm: VM, node: Node): Value =
+  ## Depth-capped entry point for expression evaluation.
+  ##
+  ## Every nested expression costs host C stack, not just every call, so the
+  ## budget has to be charged here and not only at the call sites above.
+  ## Charging calls alone lets a script multiply the two: a recursion whose
+  ## body is a deeply nested expression overflows the stack long before the
+  ## call counter reaches its cap, which is an uncatchable crash.
+  if node.isNil:
+    return nilValue()
+  if vm.evalDepth >= vm.maxCallDepth:
+    vm.error("Maximum call depth exceeded", node.line, node.col)
+  inc vm.evalDepth
+  try:
+    result = vm.evalExprInner(node)
+  finally:
+    dec vm.evalDepth
 
 # =============================================================================
 # Statement Execution (used by step)

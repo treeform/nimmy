@@ -33,6 +33,12 @@ proc formatValue(v: Value, indent = 0): string =
   of StringValue:
     pad & "\"" & v.strVal & "\""
   
+  of ArgsValue:
+    var parts: seq[string] = @[]
+    for arg in v.argsVal:
+      parts.add(formatValue(arg, 0).strip())
+    pad & "args(" & parts.join(", ") & ")"
+  
   of ArrayValue:
     if v.arrayVal.len == 0:
       pad & "[]"

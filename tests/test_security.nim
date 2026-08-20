@@ -92,6 +92,16 @@ proc runSecurityTests*(): (int, int) =
     "unbounded UFCS recursion",
     "proc f(x) =\n  return x.f\necho f(1)\n",
     "call depth exceeded")
+  # Recursion multiplied by expression nesting: every nesting level costs host
+  # stack as well, so a budget charged only per call is overrun long before it
+  # trips.
+  block:
+    var e = "f(n)"
+    for i in 0 ..< 90: e = "(1+" & e & ")"
+    expectContainedError(
+      "recursion with deeply nested expressions",
+      "proc f(n) =\n  return " & e & "\necho f(1)\n",
+      "call depth exceeded")
 
   # -- Denial of service: an embedder can bound execution with maxSteps. -------
   expectContainedError(
