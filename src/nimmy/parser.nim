@@ -167,7 +167,7 @@ proc primary(P: Parser): Node =
   
   if P.match(IntToken):
     return Node(kind: IntLitNode, line: line, col: col, 
-                intVal: parseInt(P.previous.lexeme))
+                intVal: parseBiggestInt(P.previous.lexeme))
   
   if P.match(FloatToken):
     return Node(kind: FloatLitNode, line: line, col: col,
