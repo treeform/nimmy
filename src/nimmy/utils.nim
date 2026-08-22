@@ -14,9 +14,10 @@ const MaxRenderDepth = 512
 # Render a value to a string. `quoted` puts quotes around strings (debug repr);
 # `seen` holds the containers on the current path so cycles are detected instead
 # of recursed into forever, and `depth` backstops pathologically deep nesting.
-# Every container node charges the instruction budget, so rendering a huge
-# structure is bounded like any other work.
-proc render(v: Value, seen: var HashSet[pointer], quoted: bool, depth: int): string =
+# Every container node charges the given budget (nil = uncharged), so rendering
+# a huge structure inside a script is bounded like any other work.
+proc render(v: Value, seen: var HashSet[pointer], quoted: bool, depth: int,
+            budget: Budget): string =
   if v.isNil:
     return "nil"
   case v.kind
@@ -42,10 +43,10 @@ proc render(v: Value, seen: var HashSet[pointer], quoted: bool, depth: int): str
   of ArgsValue:
     var parts: seq[string]
     for arg in v.argsVal:
-      parts.add(render(arg, seen, false, depth))
+      parts.add(render(arg, seen, false, depth, budget))
     return parts.join(" ")
   of ArrayValue, TableValue, SetValue, ObjectValue:
-    chargeInstructions(1)
+    budget.chargeInstructions(1)
     let identity = cast[pointer](v)
     if depth >= MaxRenderDepth or identity in seen:
       return "..."  # cyclic or too deeply nested
@@ -54,34 +55,39 @@ proc render(v: Value, seen: var HashSet[pointer], quoted: bool, depth: int): str
     case v.kind
     of ArrayValue:
       for elem in v.arrayVal:
-        parts.add(render(elem, seen, true, depth + 1))
+        parts.add(render(elem, seen, true, depth + 1, budget))
       result = "[" & parts.join(", ") & "]"
     of TableValue:
       for k, val in v.tableVal:
-        parts.add("\"" & k & "\": " & render(val, seen, true, depth + 1))
+        parts.add("\"" & k & "\": " & render(val, seen, true, depth + 1, budget))
       result = "{" & parts.join(", ") & "}"
     of SetValue:
       for elem in v.setVal:
-        parts.add(render(elem, seen, true, depth + 1))
+        parts.add(render(elem, seen, true, depth + 1, budget))
       result = "{" & parts.join(", ") & "}"
     of ObjectValue:
       for k, val in v.objFields:
-        parts.add(fmt"{k}: " & render(val, seen, true, depth + 1))
+        parts.add(fmt"{k}: " & render(val, seen, true, depth + 1, budget))
       result = fmt"{v.objType}(" & parts.join(", ") & ")"
     else:
       discard
     seen.excl(identity)
     return result
 
-# Convert Value to string for display
-proc `$`*(v: Value): string =
+# Convert Value to string for display, charging `budget` per container node
+# (the VM passes its own budget; hosts may pass nil).
+proc valueString*(v: Value, budget: Budget): string =
   var seen = initHashSet[pointer]()
-  render(v, seen, false, 0)
+  render(v, seen, false, 0, budget)
+
+# Convert Value to string for display (uncharged, for host-side use)
+proc `$`*(v: Value): string =
+  valueString(v, nil)
 
 # Debug representation (shows quotes around strings)
 proc valueRepr*(v: Value): string =
   var seen = initHashSet[pointer]()
-  render(v, seen, true, 0)
+  render(v, seen, true, 0, nil)
 
 # Truthiness check
 proc isTruthy*(v: Value): bool =
@@ -113,12 +119,12 @@ proc isTruthy*(v: Value): bool =
   of RangeValue:
     result = true
 
-# Equality check
-proc equals*(a, b: Value): bool =
-  # One instruction per comparison, so the scans built on equals — contains,
-  # `in`, set union/intersection/difference, incl/excl, `==` on nested data —
-  # are all bounded by the instruction budget instead of running unaccounted.
-  chargeInstructions(1)
+# Equality check. One instruction per comparison against `budget` (nil =
+# uncharged), so the scans built on equals — contains, `in`, set
+# union/intersection/difference, incl/excl, `==` on nested data — are all
+# bounded by the instruction budget instead of running unaccounted.
+proc equals*(a, b: Value, budget: Budget = nil): bool =
+  budget.chargeInstructions(1)
   if a.isNil and b.isNil:
     return true
   if a.isNil or b.isNil:
@@ -145,14 +151,14 @@ proc equals*(a, b: Value): bool =
     if a.argsVal.len != b.argsVal.len:
       return false
     for i in 0..<a.argsVal.len:
-      if not equals(a.argsVal[i], b.argsVal[i]):
+      if not equals(a.argsVal[i], b.argsVal[i], budget):
         return false
     result = true
   of ArrayValue:
     if a.arrayVal.len != b.arrayVal.len:
       return false
     for i in 0..<a.arrayVal.len:
-      if not equals(a.arrayVal[i], b.arrayVal[i]):
+      if not equals(a.arrayVal[i], b.arrayVal[i], budget):
         return false
     result = true
   of SetValue:
@@ -162,7 +168,7 @@ proc equals*(a, b: Value): bool =
     for elem in a.setVal:
       var found = false
       for other in b.setVal:
-        if equals(elem, other):
+        if equals(elem, other, budget):
           found = true
           break
       if not found:
@@ -255,9 +261,9 @@ proc `$`*(t: Token): string =
   result = "Token(" & $t.kind & ", \"" & t.lexeme & "\", " & $t.line & ":" & $t.col & ")"
 
 # Check if a value is in a set
-proc setContains*(s: Value, elem: Value): bool =
+proc setContains*(s: Value, elem: Value, budget: Budget = nil): bool =
   for v in s.setVal:
-    if equals(v, elem):
+    if equals(v, elem, budget):
       return true
   false
 

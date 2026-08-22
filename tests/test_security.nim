@@ -14,7 +14,7 @@
 
 import std/strutils
 import ../src/nimmy
-import ../src/nimmy/vm
+import ../src/nimmy/[vm, parser]
 
 var securityPassed* = 0
 var securityFailed* = 0
@@ -130,7 +130,7 @@ proc runSecurityTests*(): (int, int) =
     proc allocOf(src: string): int =
       let nvm = newNimmyVM()
       discard nvm.run(src)
-      allocationsUsed()
+      nvm.vm.allocationsUsed
     let src = "var a = []\nfor i in 0 ..< 100:\n  a = add(a, i * i)\necho a.len\n"
     let a1 = allocOf(src)
     let a2 = allocOf(src)
@@ -400,6 +400,143 @@ proc runSecurityTests*(): (int, int) =
           r.success and after.value != nil and after.value.kind == IntValue and
             after.value.intVal == 9,
           "success=" & $r.success)
+
+
+  # -- Budgets are per VM: one script's exhaustion never touches another. ------
+  block:
+    let exhausted = newNimmyVM()
+    exhausted.vm.maxSteps = 100
+    var msg = ""
+    try:
+      discard exhausted.run("while true:\n  var x = 1\n")
+    except CatchableError as e:
+      msg = e.msg
+    let fresh = newNimmyVM()
+    fresh.vm.maxSteps = 100
+    var got = ""
+    try:
+      got = fresh.run("echo 1 + 1\n").strip()
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("budgets are per VM, not global",
+          "step count exceeded" in msg and got == "2", msg & " / " & got)
+  block:
+    # Usage is readable per VM and the exhausted VM keeps its own count.
+    let nvm = newNimmyVM()
+    discard nvm.run("var a = [1, 2, 3]\n")
+    check("usage counters are readable per VM",
+          nvm.vm.steps > 0 and nvm.vm.allocationsUsed > 0,
+          "steps=" & $nvm.vm.steps & " alloc=" & $nvm.vm.allocationsUsed)
+
+  # -- Per-step cap: one statement cannot do unbounded work. --------------------
+  block:
+    let nvm = newNimmyVM()
+    nvm.vm.maxInstructionsPerStep = 50
+    var msg = ""
+    try:
+      discard nvm.run("var a = []\nfor i in 0 ..< 1000:\n  a = add(a, i)\n" &
+                      "var found = contains(a, -1)\n")
+    except CatchableError as e:
+      msg = e.msg
+    check("per-step instruction cap bounds a single statement",
+          "instructions per step" in msg, "got: " & msg)
+  block:
+    let nvm = newNimmyVM()
+    nvm.vm.maxInstructionsPerStep = 50
+    var got = ""
+    try:
+      got = nvm.run("var s = 0\nfor i in 0 ..< 1000:\n  s = s + i\necho s\n").strip()
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("per-step cap leaves ordinary statements alone", got == "499500", got)
+
+  # -- Limits raise LimitError, a RuntimeError, so hosts can tell them apart. --
+  block:
+    let nvm = newNimmyVM()
+    nvm.vm.maxSteps = 100
+    var kind = "none"
+    try:
+      discard nvm.run("while true:\n  var x = 1\n")
+    except LimitError:
+      kind = "LimitError"
+    except RuntimeError:
+      kind = "RuntimeError"
+    check("budget exhaustion is a LimitError", kind == "LimitError", kind)
+  block:
+    let nvm = newNimmyVM()
+    var kind = "none"
+    try:
+      discard nvm.run("echo [1][5]\n")
+    except LimitError:
+      kind = "LimitError"
+    except RuntimeError:
+      kind = "RuntimeError"
+    check("script bugs stay plain RuntimeError", kind == "RuntimeError", kind)
+
+  # -- No synchronous evaluation: a proc in an expression costs real steps. ---
+  block:
+    # Each statement of a proc called from an if condition is its own step, so
+    # a host counting steps sees the work (and maxSteps bounds it).
+    let nvm = newNimmyVM()
+    nvm.vm.maxSteps = 50
+    var msg = ""
+    try:
+      discard nvm.run("proc f() =\n  while true:\n    var x = 1\n  return true\n" &
+                      "if f():\n  echo 1\n")
+    except CatchableError as e:
+      msg = e.msg
+    check("proc called in a condition is bounded by maxSteps",
+          "step count exceeded" in msg, "got: " & msg)
+
+  # -- Host natives: exceptions become RuntimeError with a line number. --------
+  block:
+    let nvm = newNimmyVM()
+    nvm.addProc("boom", proc(args: seq[Value]): Value =
+      raise newException(ValueError, "host failure"))
+    var msg = ""
+    var isNimmy = false
+    try:
+      discard nvm.run("let a = 1\nboom()\n")
+    except NimmyError as e:
+      isNimmy = true
+      msg = e.msg
+    except CatchableError as e:
+      msg = "not nimmy: " & e.msg
+    check("host native exception surfaces as NimmyError with line",
+          isNimmy and "host failure" in msg and "line 2" in msg, msg)
+
+  # -- Integer overflow wraps instead of raising an uncatchable Defect. --------
+  block:
+    let nvm = newNimmyVM()
+    var got = ""
+    try:
+      got = nvm.run("echo 9223372036854775807 + 1\necho -9223372036854775807 - 2\n" &
+                    "echo 4611686018427387904 * 4\necho abs(-9223372036854775807 - 1)\n" &
+                    "echo (-9223372036854775807 - 1) div -1\n").strip()
+    except CatchableError as e:
+      got = "error: " & e.msg
+    check("int64 arithmetic wraps instead of trapping",
+          got == "-9223372036854775808\n9223372036854775807\n0\n" &
+                 "-9223372036854775808\n-9223372036854775808", got)
+
+  # -- vm.suspend(): a native can end the step after it returns. ---------------
+  block:
+    let nvm = newNimmyVM()
+    var calls = 0
+    nvm.addProc("act", proc(args: seq[Value]): Value =
+      calls += 1
+      nvm.vm.suspend()
+      nilValue())
+    let ast = parse("if act() == nil and act() == nil and act() == nil:\n  echo 1\n")
+    nvm.vm.load(ast)
+    nvm.vm.step()
+    let afterOne = calls
+    let suspended = nvm.vm.suspended
+    while not nvm.vm.isFinished:
+      nvm.vm.step()
+    check("suspend ends the step after one native call",
+          afterOne == 1 and suspended and calls == 3,
+          "afterOne=" & $afterOne & " calls=" & $calls)
 
   # -- Host stays alive: after all of the above, the VM is still usable. --------
   block:

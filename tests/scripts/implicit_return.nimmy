@@ -1,0 +1,27 @@
+# The last expression of a proc body is its value, in every call context.
+proc double(x) =
+  x * 2
+
+proc isSmall(x) =
+  let limit = 10
+  x < limit
+
+proc sign(x) =
+  if x < 0:
+    -1
+  elif x == 0:
+    0
+  else:
+    1
+
+echo double(4)
+let d = double(5)
+echo d
+if isSmall(3):
+  echo "small"
+while isSmall(100):
+  echo "never"
+echo sign(-5)
+echo sign(0)
+echo sign(7)
+echo [double(1), double(2)]

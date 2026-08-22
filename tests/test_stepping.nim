@@ -374,6 +374,111 @@ let done = true
     
     doAssert vm.isFinished
 
+
+# =============================================================================
+# Test: Proc Call Inside an Expression Steps Into the Proc
+# =============================================================================
+
+proc testExpressionCallSteps() =
+  test "proc call inside an if condition steps into the proc":
+    let vm = createVM()
+    let code = """
+proc f() =
+  let a = 1
+  return true
+if f():
+  let b = 2
+let c = 3
+"""
+    let ast = parse(code)
+    vm.load(ast)
+
+    doAssert vm.currentLine == 1
+    vm.step()
+
+    doAssert vm.currentLine == 4, "Should be at the if, got " & $vm.currentLine
+    vm.step()
+
+    doAssert vm.currentLine == 2, "Should be inside f, got " & $vm.currentLine
+    doAssert vm.callDepth == 1
+    vm.step()
+
+    doAssert vm.currentLine == 3, "Should be at return, got " & $vm.currentLine
+    vm.step()
+
+    # The return also finishes the if and enters its body in the same step.
+    doAssert vm.currentLine == 5, "Should be in the if body, got " & $vm.currentLine
+    doAssert vm.callDepth == 0
+    vm.step()
+
+    doAssert vm.currentLine == 6, "Should be at line 6, got " & $vm.currentLine
+    vm.step()
+
+    doAssert vm.isFinished
+
+  test "while condition call costs a step per statement of the proc":
+    let vm = createVM()
+    let code = """
+var n = 0
+proc tick() =
+  n = n + 1
+  return n < 3
+while tick():
+  discard
+let done = true
+"""
+    let ast = parse(code)
+    vm.load(ast)
+    var steps = 0
+    while not vm.isFinished:
+      vm.step()
+      steps += 1
+      doAssert steps < 100, "runaway"
+    doAssert vm.currentScope.lookup("n").intVal == 3
+    # var, proc, while header, tick's 2 statements x3 calls, discard x2, let
+    doAssert steps == 1 + 1 + 1 + 3 * 2 + 2 + 1, "steps=" & $steps
+
+  test "two calls in one expression run one after the other":
+    let vm = createVM()
+    let code = """
+proc f() =
+  return 10
+proc g() =
+  return 5
+let x = f() + g() * 2
+"""
+    let ast = parse(code)
+    vm.load(ast)
+    vm.step()
+    vm.step()
+    doAssert vm.currentLine == 5
+    vm.step()
+    doAssert vm.currentLine == 2, "Should be inside f, got " & $vm.currentLine
+    vm.step()
+    doAssert vm.currentLine == 4, "Should be inside g, got " & $vm.currentLine
+    vm.step()
+    doAssert vm.isFinished
+    doAssert vm.currentScope.lookup("x").intVal == 20
+
+  test "stepOver runs every call of the statement":
+    let vm = createVM()
+    let code = """
+proc f() =
+  return 10
+proc g() =
+  return 5
+let x = f() + g()
+let y = 1
+"""
+    let ast = parse(code)
+    vm.load(ast)
+    vm.stepOver()
+    vm.stepOver()
+    doAssert vm.currentLine == 5
+    vm.stepOver()
+    doAssert vm.currentLine == 6, "Should be past the calls, got " & $vm.currentLine
+    doAssert vm.currentScope.lookup("x").intVal == 15
+
 # =============================================================================
 # Run All Tests
 # =============================================================================
@@ -394,6 +499,7 @@ proc runSteppingTests*(): tuple[passed: int, failed: int] =
   testWhileLoop()
   testEarlyReturn()
   testBreakInLoop()
+  testExpressionCallSteps()
   
   result = (testsPassed, testsFailed)
 

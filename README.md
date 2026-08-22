@@ -113,21 +113,30 @@ the interpreter is written to fail safe:
   Rendering a value (`$` / `echo`) detects cycles and caps nesting depth, so a
   self-referential structure prints a `...` marker instead of overflowing the
   host stack.
-- **Catchable failures.** Script errors are `RuntimeError` (a
-  `CatchableError`), so a host can wrap `nvm.run(...)` in `try/except
-  CatchableError` and keep running. A single bad script cannot take down the
-  host process.
+- **Catchable failures.** Everything a script can cause is a `NimmyError`:
+  script bugs are `RuntimeError`, exhausted budgets are `LimitError` (a
+  `RuntimeError`), and an exception thrown by a host native is wrapped into a
+  `RuntimeError` carrying the script line. Integer arithmetic wraps at 64 bits
+  instead of raising a Nim `OverflowDefect`. A host can wrap `nvm.run(...)` in
+  `try/except NimmyError` and keep running; a single bad script cannot take
+  down the host process.
 - **Bounded execution.** An instruction budget (`vm.maxSteps`) stops infinite
-  loops. Native builtins, `echo`, element comparisons, and value rendering all
-  charge against it, so a single statement cannot do unbounded work (e.g. a
-  `contains` scan in a tight loop).
-- **Bounded recursion.** Native recursion is capped by `vm.maxCallDepth` so a
-  runaway recursive script raises an error instead of overflowing the host's C
-  stack. The parser is likewise depth-limited, so deeply nested input like
-  `((((…))))` raises a catchable `ParseError` instead of crashing during
-  parsing (and the bounded AST can't overflow the evaluator either).
+  loops. Operators, native builtins, `echo`, element comparisons, and value
+  rendering all charge against it, so work is counted wherever it happens.
+  `vm.maxInstructionsPerStep` additionally caps what one `step()` may charge,
+  so a host that counts steps can stop a single statement from doing
+  unbounded work (e.g. a `contains` scan over a huge array).
+- **Bounded recursion.** Script proc calls are capped by `vm.maxCallDepth`.
+  The VM never recurses natively on script structure — procs, loops and
+  blocks are frames on an explicit stack — so a runaway recursive script
+  raises an error instead of overflowing the host's C stack. The parser is
+  likewise depth-limited, so deeply nested input like `((((…))))` raises a
+  catchable `ParseError` instead of crashing during parsing.
 - **Bounded memory.** Script allocations are metered against `vm.maxAllocations`
   so a script cannot exhaust host memory.
+- **Per-VM accounting.** All counters live on `vm.budget`; nothing is global.
+  Two VMs in one process never share or clobber each other's budgets, and a
+  host can read `vm.steps` and `vm.allocationsUsed` per script.
 - **Sealed globals.** A script can't replace a global the host marks sealed —
   `echo` is sealed by default, and a host seals its own capabilities so it can
   trust `getGlobal` still returns the real proc. A script may still shadow a
@@ -135,24 +144,28 @@ the interpreter is written to fail safe:
 
 **These limits are on by default**, so a freshly constructed VM is hostile-safe
 without any host configuration — an infinite loop, runaway recursion, or memory
-bomb aborts with a catchable `RuntimeError`:
+bomb aborts with a catchable `LimitError`:
 
 ```nim
 let nvm = newNimmyVM()          # already limited (see DefaultMax* in vm.nim)
 try:
   discard nvm.run(untrustedSource)
-except CatchableError as e:
-  echo "script rejected: ", e.msg
+except LimitError as e:
+  echo "script ran out of budget: ", e.msg
+except NimmyError as e:
+  echo "script error: ", e.msg
 ```
 
 The defaults are generous safety nets that ordinary scripts never reach:
 `maxSteps = 10_000_000`, `maxCallDepth = 256`, `maxAllocations = 256_000_000`
-(≈256 MB). A host can tune any of them — raise them for heavy trusted scripts,
-tighten them for a multi-tenant service, or set one to `0` to disable it:
+(≈256 MB), `maxInstructionsPerStep = 0` (off). A host can tune any of them —
+raise them for heavy trusted scripts, tighten them for a multi-tenant service,
+or set one to `0` to disable it:
 
 ```nim
-nvm.vm.maxSteps = 1_000_000     # tighter statement budget
-nvm.vm.maxAllocations = 0       # disable the allocation limit (trusted use)
+nvm.vm.maxSteps = 1_000_000            # tighter instruction budget
+nvm.vm.maxAllocations = 0              # disable the allocation limit (trusted use)
+nvm.vm.maxInstructionsPerStep = 1_000  # no single step may do more than this
 ```
 
 `maxAllocations` is a deterministic budget on the heap-backed data a script
@@ -185,6 +198,21 @@ binding is private to the script and never touches the host's global.
 > Use the default or `-d:release` build. For strong isolation, also run the
 > host in an OS sandbox (separate process, seccomp/jail, resource limits) as
 > defense in depth.
+
+## Stepping and the unit of time
+
+`vm.step()` executes exactly one statement. That holds everywhere: a user proc
+called from inside an expression — `if f():`, `while f():`, `let x = f() + 1`,
+`a[f()] = g()` — is pushed as a frame and runs one statement per step, exactly
+like a proc called as a statement. There is no synchronous fast path, so the
+number of steps a script takes depends on the work it does, not on how the
+calls are phrased. When the proc returns, the statement that was waiting on it
+finishes in that same step.
+
+Hosts that use `step()` as a game tick and want the *action* rather than the
+statement to be the unit of time can have a native call `vm.suspend()`: the
+step ends as soon as that native returns and the statement resumes on the next
+`step()`. `vm.suspended` reports whether the last step ended that way.
 
 ## Debugger and inspection support
 

@@ -1,0 +1,27 @@
+# User procs called inside expressions run as frames, so every position works.
+proc inc(x) =
+  return x + 1
+
+proc pair() =
+  return [1, 2]
+
+var a = [0, 0, 0]
+a[inc(0)] = inc(8)
+echo a
+echo inc(1) + inc(2) * inc(3)
+let t = {"k": inc(41)}
+echo t
+echo 5.inc
+echo inc(inc(inc(0)))
+var calls = 0
+proc side() =
+  calls = calls + 1
+  return false
+# and/or short-circuit: side() must not run
+if true or side():
+  echo "or"
+if false and side():
+  echo "and"
+echo calls
+echo pair()[inc(0)]
+echo pair().len

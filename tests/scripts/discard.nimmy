@@ -1,0 +1,12 @@
+proc work() =
+  echo "working"
+  return 42
+
+discard
+discard work()
+discard 1 + 2
+var n = 0
+while n < 2:
+  n = n + 1
+  discard
+echo n

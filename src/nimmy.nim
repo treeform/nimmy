@@ -40,7 +40,9 @@ proc newNimmyVM*(): NimmyVM =
   vm.addProc("str") do (args: seq[Value]) -> Value:
     if args.len != 1:
       raise newException(RuntimeError, "str() takes exactly 1 argument")
-    return stringValue($args[0])
+    let rendered = valueString(args[0], vm.budget)
+    vm.budget.chargeAllocation(rendered.len + 1)
+    return stringValue(rendered)
   
   # int(x) - convert to integer
   vm.addProc("int") do (args: seq[Value]) -> Value:
@@ -112,7 +114,7 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "add() takes exactly 2 arguments")
     if args[0].kind != ArrayValue:
       raise newException(RuntimeError, "First argument to add() must be an array")
-    chargeAllocation(8)  # account for the appended element
+    vm.budget.chargeAllocation(8)  # account for the appended element
     args[0].arrayVal.add(args[1])
     return args[0]
   
@@ -134,7 +136,9 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "Argument to keys() must be a table")
     var keys: seq[Value] = @[]
     for k in args[0].tableVal.keys:
+      vm.budget.chargeAllocation(k.len + 1)
       keys.add(stringValue(k))
+    vm.budget.chargeAllocation(keys.len * 8 + 8)
     return arrayValue(keys)
   
   # values(table) - get values of table
@@ -146,6 +150,7 @@ proc newNimmyVM*(): NimmyVM =
     var vals: seq[Value] = @[]
     for v in args[0].tableVal.values:
       vals.add(v)
+    vm.budget.chargeAllocation(vals.len * 8 + 8)
     return arrayValue(vals)
   
   # hasKey(table, key) - check if key exists
@@ -164,6 +169,8 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "abs() takes exactly 1 argument")
     case args[0].kind
     of IntValue:
+      if args[0].intVal == low(int64):
+        return args[0]  # abs(low) wraps rather than trapping
       return intValue(abs(args[0].intVal))
     of FloatValue:
       return floatValue(abs(args[0].floatVal))
@@ -192,10 +199,10 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "contains() takes exactly 2 arguments")
     case args[0].kind
     of SetValue:
-      boolValue(setContains(args[0], args[1]))
+      boolValue(setContains(args[0], args[1], vm.budget))
     of ArrayValue:
       for elem in args[0].arrayVal:
-        if equals(elem, args[1]):
+        if equals(elem, args[1], vm.budget):
           return boolValue(true)
       boolValue(false)
     of TableValue:
@@ -212,9 +219,9 @@ proc newNimmyVM*(): NimmyVM =
     if args[0].kind != SetValue:
       raise newException(RuntimeError, "First argument to incl() must be a set")
     for existing in args[0].setVal:
-      if equals(existing, args[1]):
+      if equals(existing, args[1], vm.budget):
         return args[0]
-    chargeAllocation(8)  # account for the added set element
+    vm.budget.chargeAllocation(8)  # account for the added set element
     args[0].setVal.add(args[1])
     args[0]
   
@@ -226,7 +233,7 @@ proc newNimmyVM*(): NimmyVM =
       raise newException(RuntimeError, "First argument to excl() must be a set")
     var newSet: seq[Value] = @[]
     for existing in args[0].setVal:
-      if not equals(existing, args[1]):
+      if not equals(existing, args[1], vm.budget):
         newSet.add(existing)
     args[0].setVal = newSet
     args[0]
