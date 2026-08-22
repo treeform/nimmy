@@ -652,7 +652,15 @@ proc statement(P: Parser): Node =
   
   if P.match(ContinueToken):
     return Node(kind: ContinueStmtNode, line: P.previous.line, col: P.previous.col)
-  
+
+  # `discard` / `discard expr`: evaluate (if anything) and ignore the value.
+  # Parsed by name so `discard` stays usable as an identifier elsewhere.
+  if P.check(IdentToken) and P.current.lexeme == "discard":
+    let keyword = P.advance()
+    if P.checkAny({NewlineToken, EofToken, DedentToken}):
+      return Node(kind: EmptyNode, line: keyword.line, col: keyword.col)
+    return P.expression()
+
   return P.expressionStatement()
 
 proc parse*(source: string, maxDepth = MaxParseDepth): Node =

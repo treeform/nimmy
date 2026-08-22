@@ -263,7 +263,8 @@ type
     isConst*: OrderedTableRef[string, bool]
     sealed*: OrderedTableRef[string, bool]  ## Names a script may not redefine or assign
 
-  # Error types
+  # Error types. Everything a script can trigger surfaces as a NimmyError so a
+  # host can catch one type and keep running.
   NimmyError* = object of CatchableError
     line*: int
     col*: int
@@ -271,6 +272,21 @@ type
   LexerError* = object of NimmyError
   ParseError* = object of NimmyError
   RuntimeError* = object of NimmyError
+  LimitError* = object of RuntimeError
+    ## A resource budget was exhausted: instruction budget, per-step
+    ## instruction cap, allocation budget or call depth.
+
+  ## Resource accounting for one VM. Every counter lives here, owned by the VM
+  ## that runs the script, so two VMs never share or clobber each other's
+  ## budgets and the host can inspect usage per script. A limit of 0 means
+  ## unlimited.
+  Budget* = ref object
+    instructions*: int          ## Instructions charged this run
+    instructionLimit*: int      ## Cap on instructions per run (maxSteps)
+    stepInstructions*: int      ## Instructions charged since the current step began
+    stepInstructionLimit*: int  ## Cap on instructions a single step may charge
+    allocations*: int           ## Allocation units charged this run
+    allocationLimit*: int       ## Cap on allocation units per run
 
   # Debug info
   DebugInfo* = object
@@ -278,63 +294,51 @@ type
     stepMode*: bool
     currentLine*: int
 
-# Allocation accounting
-#
-# A deterministic budget on the heap-backed data a script creates. It bounds
-# memory the way maxSteps bounds execution, and catches super-linear growth
-# (e.g. `s = s & s` in a loop) that a statement count cannot. Counting happens
-# in the value constructors below, so no allocation site can be missed. Units
-# are approximate bytes and are deterministic across platforms (unlike
-# getOccupiedMem), preserving Nimmy's lockstep guarantee.
-var
-  allocatedUnits* {.threadvar.}: int   ## Cumulative units charged this run.
-  allocationLimit* {.threadvar.}: int  ## Cap in units, 0 means unlimited.
+## Budget accounting
+##
+## Allocations are a deterministic budget on the heap-backed data a script
+## creates (approximate bytes), catching super-linear growth (e.g. `s = s & s`
+## in a loop) that an instruction count cannot. Units are deterministic across
+## platforms (unlike getOccupiedMem), preserving Nimmy's lockstep guarantee.
+## The VM charges at every site that creates script-visible data; hosts that
+## build large values in their own natives can charge through `vm.budget`.
 
-proc chargeAllocation*(units: int) =
-  ## Account for `units` of allocation and enforce the limit. Raises a
-  ## catchable RuntimeError when the budget is exhausted.
-  if units <= 0:
+proc newBudget*(instructionLimit, allocationLimit: int,
+                stepInstructionLimit = 0): Budget =
+  Budget(instructionLimit: instructionLimit, allocationLimit: allocationLimit,
+         stepInstructionLimit: stepInstructionLimit)
+
+proc reset*(budget: Budget) =
+  ## Begin a fresh run: counters to zero, limits unchanged.
+  budget.instructions = 0
+  budget.stepInstructions = 0
+  budget.allocations = 0
+
+proc beginStep*(budget: Budget) =
+  ## Called by the VM at the start of every step().
+  budget.stepInstructions = 0
+
+proc chargeInstructions*(budget: Budget, n: int) =
+  ## Account for `n` instructions against the run budget and the per-step cap.
+  ## Raises a catchable LimitError when either is exhausted.
+  if budget.isNil or n <= 0:
     return
-  allocatedUnits += units
-  if allocationLimit > 0 and allocatedUnits > allocationLimit:
-    raise newException(RuntimeError, "Maximum allocation exceeded")
+  budget.instructions += n
+  budget.stepInstructions += n
+  if budget.instructionLimit > 0 and budget.instructions > budget.instructionLimit:
+    raise newException(LimitError, "Maximum step count exceeded")
+  if budget.stepInstructionLimit > 0 and
+      budget.stepInstructions > budget.stepInstructionLimit:
+    raise newException(LimitError, "Maximum instructions per step exceeded")
 
-proc allocationsUsed*(): int =
-  ## Units charged since the current run began.
-  allocatedUnits
-
-proc resetAllocations*(limit: int) =
-  ## Begin a fresh allocation budget for a run.
-  allocatedUnits = 0
-  allocationLimit = limit
-
-# Instruction accounting
-#
-# The statement/step budget, exposed thread-locally so that work done outside
-# the statement stepper — native builtins and value rendering ($ / echo) — can
-# charge against it too. A statement that calls a builtin doing O(n) work, or
-# renders a large structure, is bounded instead of running unaccounted.
-var
-  instructionCount* {.threadvar.}: int  ## Cumulative instructions this run.
-  instructionLimit* {.threadvar.}: int  ## Cap, 0 means unlimited.
-
-proc chargeInstructions*(n: int) =
-  ## Account for `n` instructions and enforce the limit. Raises a catchable
-  ## RuntimeError when the budget is exhausted.
-  if n <= 0:
+proc chargeAllocation*(budget: Budget, units: int) =
+  ## Account for `units` of allocation. Raises a catchable LimitError when the
+  ## budget is exhausted.
+  if budget.isNil or units <= 0:
     return
-  instructionCount += n
-  if instructionLimit > 0 and instructionCount > instructionLimit:
-    raise newException(RuntimeError, "Maximum step count exceeded")
-
-proc instructionsUsed*(): int =
-  ## Instructions charged since the current run began.
-  instructionCount
-
-proc resetInstructions*(limit: int) =
-  ## Begin a fresh instruction budget for a run.
-  instructionCount = 0
-  instructionLimit = limit
+  budget.allocations += units
+  if budget.allocationLimit > 0 and budget.allocations > budget.allocationLimit:
+    raise newException(LimitError, "Maximum allocation exceeded")
 
 # Value constructors
 proc nilValue*(): Value =
@@ -350,26 +354,21 @@ proc floatValue*(f: float64): Value =
   Value(kind: FloatValue, floatVal: f)
 
 proc stringValue*(s: string): Value =
-  chargeAllocation(s.len + 1)
   Value(kind: StringValue, strVal: s)
 
 proc argsValue*(args: seq[Value]): Value =
   Value(kind: ArgsValue, argsVal: args)
 
 proc arrayValue*(arr: seq[Value]): Value =
-  chargeAllocation(arr.len * 8 + 8)
   Value(kind: ArrayValue, arrayVal: arr)
 
 proc tableValue*(): Value =
-  chargeAllocation(8)
   Value(kind: TableValue, tableVal: newOrderedTable[string, Value]())
 
 proc setValue*(elems: seq[Value]): Value =
-  chargeAllocation(elems.len * 8 + 8)
   Value(kind: SetValue, setVal: elems)
 
 proc objectValue*(typeName: string): Value =
-  chargeAllocation(8)
   Value(kind: ObjectValue, objType: typeName, objFields: newOrderedTable[string, Value]())
 
 proc procValue*(name: string, params: seq[string], body: Node, closure: Scope): Value =
